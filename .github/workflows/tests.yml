@@ -28,9 +28,13 @@ jobs:
         run: node test/auth.test.js src/auth.js
       - name: i18n suite (87 checks)
         run: node test/i18n.test.js src/i18n.js src/data.js
-      - name: live-backend E2E (12 checks)
+      - name: install pg + playwright
         run: |
+          npm install pg --no-audit --no-fund
           npx playwright@1.57.0 install --with-deps chromium
-          node test/live.test.js public/index.html test/fixtures test/fixtures/bourj
+      - name: live-backend E2E (12 checks)
+        run: node test/live.test.js public/index.html test/fixtures test/fixtures/bourj
+      - name: server-auth E2E (15 checks)
+        run: node test/server_auth.test.js public/index.html test/fixtures
       - name: preview E2E (54 checks)
         run: node test/e2e.js public/index.html test/fixtures test/fixtures/bourj shots

@@ -269,7 +269,7 @@
         few: "{n} points over {k} classes — below the engine's minimum of 20 points over 2 classes, so automatic anchors would be used.",
         ok: "{n} points over {k} classes — enough to train on your own points."
       },
-      run: "Classify", compare: "Compare algorithms", running: "Running…",
+      run: "Classify", compare: "Compare algorithms", historyBtn: "History", running: "Running…",
       needAoi: "Define a study area first (upload, draw or coordinates).",
       aoi: {
         clear: "Remove study area",
@@ -577,7 +577,7 @@
         few: "{n} نقطة على {k} فئات — أقل من حد المحرك (20 نقطة على فئتين)، فستُستخدم مراسٍ تلقائية.",
         ok: "{n} نقطة على {k} فئات — تكفي للتدريب على نقاطك."
       },
-      run: "صنّف", compare: "قارن الخوارزميات", running: "جارٍ التنفيذ…",
+      run: "صنّف", compare: "قارن الخوارزميات", historyBtn: "السجل", running: "جارٍ التنفيذ…",
       needAoi: "حدّد منطقة الدراسة أولًا (بالرفع أو الرسم أو الإحداثيات).",
       aoi: {
         clear: "إزالة منطقة الدراسة",

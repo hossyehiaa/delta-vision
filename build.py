@@ -133,6 +133,7 @@ def main():
         "/*__LEAFLET__*/": js((VENDOR / "leaflet" / "leaflet.js").read_text()),
         "/*__GEO__*/": js((SRC / "geo.js").read_text()),
         "/*__AUTH__*/": js((SRC / "auth.js").read_text()),
+        "/*__SRV__*/": js((SRC / "srv.js").read_text()),
         "/*__DATA__*/": js((SRC / "data.js").read_text()),
         "/*__I18N__*/": js((SRC / "i18n.js").read_text()),
         "/*__APP__*/": dvimg + js((SRC / "app.js").read_text()),

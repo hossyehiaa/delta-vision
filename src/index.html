@@ -388,6 +388,7 @@
 
         <div class="ws-actions">
           <button class="btn btn-lime btn-lg" id="run-btn" data-i18n="ws.run"></button>
+          <button class="btn btn-ghost" id="history-btn" data-i18n="ws.historyBtn" hidden></button>
           <button class="btn btn-ghost" id="compare-btn" data-i18n="ws.compareBtn"></button>
         </div>
       </div>
@@ -579,6 +580,20 @@
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+<dialog class="dialog" id="history-dialog">
+  <div class="dialog-inner">
+    <div class="dialog-head">
+      <h2 data-i18n="ws.history.title"></h2>
+      <button class="round-btn round-ghost" id="history-close">
+        <span class="sr-only" data-i18n="ws.history.close"></span>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </button>
+    </div>
+    <p class="hint" data-i18n="ws.history.text"></p>
+    <div class="table-wrap"><table class="dv-table" id="history-table"></table></div>
+    <p class="hint" id="history-empty" hidden data-i18n="ws.history.empty"></p>
+  </div>
+</dialog>
 <dialog class="dialog" id="compare-dialog">
   <div class="dialog-inner">
     <div class="dialog-head">
@@ -598,6 +613,7 @@
 /*__LEAFLET__*/
 /*__GEO__*/
 /*__AUTH__*/
+/*__SRV__*/
 /*__DATA__*/
 /*__I18N__*/
 /*__APP__*/

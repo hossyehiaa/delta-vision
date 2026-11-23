@@ -92,11 +92,37 @@ and must answer with:
 With that set, the badge flips to **Earth Engine**, the map shows the real tile overlay, and the
 results card shows the real OA / Kappa and the endpoint's own areas. Errors surface as a toast.
 
+## Server layer (Vercel + Neon)
+
+The deployed build has a real backend — `api/` contains Vercel serverless functions backed by
+Neon Postgres:
+
+| Route | What it does |
+| --- | --- |
+| `GET /api/health` | DB reachable? |
+| `POST /api/auth/signup` | create account (scrypt hash) → session token |
+| `POST /api/auth/login` | log in → session token (HMAC-signed, 14 days) |
+| `POST /api/auth/demo` | log into the shared demo account (created on first use) |
+| `GET /api/auth/me` | current user from the Bearer token |
+| `GET/POST /api/runs` | list / save run snapshots (per user, last 50) |
+| `GET/DELETE /api/runs/:id` | reopen / delete a snapshot |
+
+Client-side, `src/srv.js` wraps all of this and **falls back to the local demo auth
+(`auth.js`) whenever the API is unreachable** — the single HTML file stays fully functional
+offline. Runs auto-save after each classification (aoiGeo + algorithm + season + params +
+results) and the **History** dialog in the workspace lists, reopens and deletes them.
+
+Env vars (set in Vercel → Settings → Environment Variables, never committed):
+
+- `DATABASE_URL` — the Neon connection string
+- `AUTH_SECRET` — a long random string used to sign session tokens
+
 ## Tests
 
 ```bash
-npm test        # unit suites: geo 140 checks, auth 39, i18n 87  (needs node)
-npm run test:e2e  # Playwright: 54 preview checks + 12 live-backend checks
+npm test          # geo 140 + auth 39 + i18n 87 (node, vendored proj4)
+DATABASE_URL=… node test/api_local.test.js     # 26 checks against the real Neon DB
+npm run test:e2e # Playwright: 54 preview + 12 live-backend + 15 server-auth/runs checks
 ```
 
 The geo suite is checked against pyproj/geopandas reference values (see `ref/geo_reference.py`);

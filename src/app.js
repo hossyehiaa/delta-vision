@@ -12,6 +12,7 @@
   "use strict";
 
   var I = window.DVI18N, D = window.DVData, G = window.DVGeo, A = window.DVAuth;
+  var S = window.DVSrv;   // server adapter (deployed build); undefined in the pure-local single file
   var KEY_PREFS = "dv_prefs";
 
   // ---------------------------------------------------------------- state
@@ -59,9 +60,9 @@
     if (VIEWS.indexOf(name) < 0) name = "home";
     var next = null;
     if (name === "login" || name === "signup") {
-      if (A.session()) next = "workspace";
+      if (authSession()) next = "workspace";
     } else if (name === "workspace" || name === "upload") {
-      if (!A.session()) { next = "login"; try { sessionStorage.setItem("dv_next", "#/" + h); } catch (e) { /* ignore */ } }
+      if (!authSession()) { next = "login"; try { sessionStorage.setItem("dv_next", "#/" + h); } catch (e) { /* ignore */ } }
     }
     if (next) { location.hash = "#/" + next; return; }
     VIEWS.forEach(function (v) { var node = $("#view-" + v); if (node) node.classList.toggle("is-on", v === name); });
@@ -219,13 +220,14 @@
     langBtn.setAttribute("aria-label", t("nav.langLabel"));
     langBtn.addEventListener("click", toggleLang);
     box.appendChild(langBtn);
-    var sess = A.session();
+    var sess = authSession();
     if (!sess) {
       var a1 = el("a", "btn btn-ghost", t("nav.login")); a1.href = "#/login"; box.appendChild(a1);
       var a2 = el("a", "btn btn-lime", t("nav.getStarted")); a2.href = "#/signup"; box.appendChild(a2);
     } else {
       var acc = el("div", "account");
       var btn = el("button", "account-btn");
+      btn.id = "account-btn";
       btn.type = "button";
       var av = el("span", "avatar", (sess.name || sess.email || "?").trim().charAt(0).toUpperCase() || "?");
       var nm = el("span", null, (sess.name || sess.email).split("@")[0]);
@@ -239,7 +241,7 @@
       menu.appendChild(who);
       var out = el("button", "btn btn-ghost btn-sm", t("nav.logout"));
       out.type = "button";
-      out.addEventListener("click", function () { A.logout(); toast(t("common.toasts.loggedOut")); renderNavAuth(); route(); });
+      out.addEventListener("click", function () { authLogout(); toast(t("common.toasts.loggedOut")); renderNavAuth(); route(); });
       menu.appendChild(out);
       btn.addEventListener("click", function (ev) {
         ev.stopPropagation();
@@ -259,6 +261,29 @@
     renderNavAuth(); renderHome(); renderWorkspaceChrome(); renderAlgorithmPage(); renderUploadPage(); renderGuidePage(); applyModeBadge();
     toast(state.lang === "ar" ? "تم التبديل إلى العربية" : "Switched to English");
   }
+
+  // ---------------------------------------------------------------- async auth (server, with local fallback)
+  // Wraps DVSrv so the rest of app.js keeps calling login/signup/demo/logout/session synchronously:
+  // the forms disable their submit button while the promise settles.
+  function authLogin(email, password) {
+    if (!S) { var r = A.login(email, password); return Promise.resolve(r); }
+    return S.login(email, password);
+  }
+  function authSignup(form) {
+    if (!S) { var r = A.signup(form); return Promise.resolve(r); }
+    return S.signup(form);
+  }
+  function authDemo() {
+    if (!S) { A.ensureDemo(); var r = A.login(A.DEMO.email, A.DEMO.password); return Promise.resolve(r); }
+    return S.demo();
+  }
+  function authLogout() {
+    if (S) S.logout(); else A.logout();
+  }
+  function authSession() {
+    return S ? S.session() : A.session();
+  }
+  function isServerAuth() { return !!(S && S.isServer && S.isServer()); }
 
   // ---------------------------------------------------------------- auth forms
   function fieldError(form, key, msg) {
@@ -282,16 +307,22 @@
       if (!email) { fieldError(lf, "email", t("login.required")); bad = true; }
       if (!password) { fieldError(lf, "password", t("login.required")); bad = true; }
       if (bad) return;
-      var res = A.login(email, password);
-      if (res.ok) { afterLogin(t("common.toasts.welcomed", { name: res.user.name || res.user.email })); }
-      else if (res.error === "BAD_CREDENTIALS" || res.error === "STORAGE") { formError(lf, t("login.error." + res.error)); }
-      else formError(lf, t("common.unknownError", { code: res.error || "?" }));
+      var submitBtn = lf.querySelector("button[type=submit]");
+      submitBtn.disabled = true;
+      authLogin(email, password).then(function (res) {
+        submitBtn.disabled = false;
+        if (res.ok) { afterLogin(t("common.toasts.welcomed", { name: res.user.name || res.user.email })); }
+        else if (res.error === "BAD_CREDENTIALS" || res.error === "STORAGE") { formError(lf, t("login.error." + res.error)); }
+        else formError(lf, t("common.unknownError", { code: res.error || "?" }));
+      });
     });
     $("#demo-btn").addEventListener("click", function () {
-      A.ensureDemo();
-      var res = A.login(A.DEMO.email, A.DEMO.password);
-      if (res.ok) afterLogin(t("common.toasts.welcomed", { name: res.user.name }));
-      else toast(t("common.error"), true);
+      var btn = $("#demo-btn"); btn.disabled = true;
+      authDemo().then(function (res) {
+        btn.disabled = false;
+        if (res.ok) afterLogin(t("common.toasts.welcomed", { name: res.user.name }));
+        else toast(t("common.error"), true);
+      });
     });
 
     var sf = $("#signup-form");
@@ -299,15 +330,23 @@
       ev.preventDefault(); clearErrors(sf);
       var name = $("#su-name").value.trim(), org = $("#su-org").value.trim();
       var email = $("#su-email").value.trim(), password = $("#su-password").value, confirm = $("#su-confirm").value;
-      var res = A.signup({ name: name, email: email, password: password, org: org, confirm: confirm });
-      if (res.ok) {
-        A.login(email, password); // standard UX: signing up also opens the session
-        afterLogin(t("common.toasts.signedUp", { name: res.user.name }));
-      }
-      else if (res.errors) {
-        Object.keys(res.errors).forEach(function (k) { fieldError(sf, k, t("signup.error." + k)); });
-        if (res.error === "STORAGE" || res.error === "EMAIL_TAKEN") formError(sf, t("signup.error." + res.error));
-      } else if (res.error) { formError(sf, t("signup.error." + res.error) !== "signup.error." + res.error ? t("signup.error." + res.error) : t("common.unknownError", { code: res.error })); }
+      var submitBtn = sf.querySelector("button[type=submit]");
+      submitBtn.disabled = true;
+      authSignup({ name: name, email: email, password: password, org: org, confirm: confirm }).then(function (res) {
+        submitBtn.disabled = false;
+        if (res.ok) {
+          if (res.session) afterLogin(t("common.toasts.signedUp", { name: res.user.name }));
+          else {
+            // offline fallback path: open the local session synchronously
+            A.login(email, password);
+            afterLogin(t("common.toasts.signedUp", { name: res.user.name }));
+          }
+        }
+        else if (res.errors) {
+          Object.keys(res.errors).forEach(function (k) { fieldError(sf, k, t("signup.error." + k)); });
+          if (res.error === "STORAGE" || res.error === "EMAIL_TAKEN") formError(sf, t("signup.error." + res.error));
+        } else if (res.error) { formError(sf, t("signup.error." + res.error) !== "signup.error." + res.error ? t("signup.error." + res.error) : t("common.unknownError", { code: res.error })); }
+      });
     });
   }
   function afterLogin(msg) {
@@ -1054,6 +1093,7 @@
       showOverlay();
       renderResults();
       renderLegend();
+      saveRunSnapshot(input, res);   // server history (no-op when offline / not signed in via server)
       done();
     };
     if (isLive()) {
@@ -1408,6 +1448,146 @@
     $("#compare-close").addEventListener("click", function () { dlg.close(); });
     dlg.addEventListener("click", function (ev) { if (ev.target === dlg) dlg.close(); });
   }
+  // ---------------------------------------------------------------- run history (server)
+  // A snapshot stores the RunInput (aoiGeo, algorithm, season, params, samplePoints) plus the
+  // compact results (classes/areas/mode) — NOT the preview image (too big); reopening re-runs
+  // the local preview deterministically (seeded by the same input) and restores the numbers.
+  function snapshotResults(r) {
+    return {
+      algorithm: r.algorithm, season: r.season, dateFrom: r.dateFrom, dateTo: r.dateTo,
+      mode: r.mode || "preview", oa: r.oa != null ? r.oa : null, kappa: r.kappa != null ? r.kappa : null,
+      isKmeans: !!r.isKmeans, nImages: r.nImages || null, nTrain: r.nTrain || null, nVal: r.nVal || null,
+      sampleSource: r.sampleSource || null, durationMs: r.durationMs || null,
+      classes: r.classes.map(function (c) { return { classId: c.classId, percent: c.percent, areaM2: c.areaM2 }; })
+    };
+  }
+  var suppressSave = false;   // set while reopening a historical run (no duplicate row)
+
+  function saveRunSnapshot(input, res) {
+    if (!S || !S.isServer()) return;   // local-only build or offline: history is a server feature
+    if (suppressSave) { suppressSave = false; return; }
+    S.saveRun({
+      algorithm: input.algorithm, season: input.season, year: input.year,
+      mode: res.mode === "live" ? "live" : "preview",
+      aoiName: input.aoiName || "", aoiGeo: input.aoiGeo,
+      samplePoints: input.samplePoints || [], params: input.params || {},
+      results: snapshotResults(res)
+    }).then(function (r) { if (r && r.ok) updateHistoryButton(); }, function () { /* silent: history is best-effort */ });
+  }
+
+  function updateHistoryButton() {
+    var btn = $("#history-btn");
+    if (!btn) return;
+    btn.hidden = !S;                       // no adapter (pure local file) → no history
+    if (S) S.listRuns().then(function (r) {
+      btn.hidden = !(r && r.ok && r.runs && r.runs.length);
+    }, function () { btn.hidden = true; });
+  }
+
+  function initHistory() {
+    var dlg = $("#history-dialog");
+    if (!dlg) return;
+    $("#history-close").addEventListener("click", function () { dlg.close(); });
+    dlg.addEventListener("click", function (ev) { if (ev.target === dlg) dlg.close(); });
+    $("#history-btn").addEventListener("click", function () {
+      dlg.showModal();
+      renderHistoryTable();
+    });
+  }
+
+  function renderHistoryTable() {
+    var table = $("#history-table"), empty = $("#history-empty");
+    table.innerHTML = "";
+    empty.hidden = true;
+    var thead = el("thead"), trh = el("tr");
+    [t("ws.history.when"), t("ws.history.algo"), t("ws.history.area"), t("ws.history.mode"), ""].forEach(function (h, i) {
+      var th = el("th", null, h);
+      if (i === 1 || i === 2) th.className = "wrap";
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh); table.appendChild(thead);
+    var tbody = el("tbody");
+    table.appendChild(tbody);
+    if (!S) { empty.hidden = false; tbody.appendChild(el("tr", null, el("td", "wrap", t("ws.history.empty")))); return; }
+    S.listRuns().then(function (r) {
+      if (!r || !r.ok || !r.runs || !r.runs.length) {
+        empty.hidden = false;
+        var tb = table.querySelector("tbody");
+        if (tb) tb.innerHTML = "";
+        return;
+      }
+      r.runs.forEach(function (run) {
+        var tr = el("tr");
+        td(tr, whenLabel(run.createdAt), "wrap");
+        td(tr, t("algo.names." + run.algorithm) !== "algo.names." + run.algorithm ? t("algo.names." + run.algorithm) : run.algorithm, "wrap");
+        td(tr, run.aoiName || "—", "wrap");
+        var modeTd = td(tr, "", "wrap");
+        modeTd.appendChild(el("span", "preview-badge" + (run.mode === "live" ? " is-live" : ""), run.mode === "live" ? "Earth Engine" : t("ws.results.modePreview")));
+        var act = el("td", "wrap");
+        var open = el("button", "btn btn-sm btn-lime", t("ws.history.open"));
+        open.type = "button";
+        open.addEventListener("click", function () { openRun(run.id); });
+        var del = el("button", "btn btn-sm btn-ghost", t("ws.history.delete"));
+        del.type = "button";
+        del.addEventListener("click", function () {
+          S.deleteRun(run.id).then(function () {
+            toast(t("ws.history.deleted"));
+            renderHistoryTable(); updateHistoryButton();
+          }, function () { toast(t("ws.history.error"), true); });
+        });
+        act.appendChild(open); act.appendChild(document.createTextNode(" "));
+        act.appendChild(del);
+        tr.appendChild(act);
+        tbody.appendChild(tr);
+      });
+    }, function () { empty.hidden = false; });
+  }
+
+  function whenLabel(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    var now = new Date(), sameDay = d.toDateString() === now.toDateString();
+    var hm = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+    if (state.lang === "ar") return d.toLocaleDateString("ar-EG") + " " + hm;
+    return (sameDay ? "today " : d.toLocaleDateString("en-GB") + " ") + hm;
+  }
+
+  function openRun(id) {
+    if (!S) return;
+    S.getRun(id).then(function (run) {
+      if (!run) { toast(t("ws.history.error"), true); return; }
+      $("#history-dialog").close();
+      // restore the AOI exactly as the upload flow does
+      var aoi = {
+        kind: "history",
+        name: run.aoiName || "",
+        fc: run.aoiGeo,
+        areaM2: 0, parcels: [], crsLabel: "WGS84", warnings: []
+      };
+      var area = 0, parcels = [];
+      run.aoiGeo.features.forEach(function (f) {
+        var a = G.geometryAreaM2(f.geometry);
+        area += a;
+        parcels.push({ name: (f.properties && (f.properties.name || f.properties.NAME)) || (run.aoiName || "AOI"), areaM2: a, properties: f.properties || {} });
+      });
+      aoi.areaM2 = area; aoi.parcels = parcels;
+      setAoi(aoi);
+      // restore season/year/algorithm/params/samples
+      state.season = run.season; state.year = run.year || state.year;
+      state.algorithm = run.algorithm;
+      if (run.params) Object.keys(run.params).forEach(function (k) { if (state.params[k] != null || I.PARAMS[k]) state.params[k] = run.params[k]; });
+      renderWorkspaceChrome();
+      // restore samples markers
+      state.samples = (run.samplePoints || []).map(function (sp) { return { classId: sp.classId, lon: sp.lon, lat: sp.lat }; });
+      renderSamples();
+      toast(t("ws.history.loaded"));
+      // re-run the local preview to redraw the map (deterministic: same input → same seed);
+      // do not re-save: this row already exists in the history
+      suppressSave = true;
+      runPreview(run.algorithm);
+    }, function () { toast(t("ws.history.error"), true); });
+  }
+
   function renderCompareTable() {
     var table = $("#compare-table");
     table.innerHTML = "";
@@ -1638,6 +1818,8 @@
     initUploadTab();
     initSamples();
     initCompare();
+    initHistory();
+    updateHistoryButton();
     initUploadPage();
     initTabs();
     renderAlgorithmPage();
@@ -1667,7 +1849,7 @@
       if (!s) return;
       var id = s.getAttribute("data-scroll");
       var target = document.getElementById(id === "workspace" ? "view-workspace" : id);
-      if (id === "workspace" && !A.session()) { location.hash = "#/login"; return; }
+      if (id === "workspace" && !authSession()) { location.hash = "#/login"; return; }
       if (target) {
         if (target.classList.contains("view") && !target.classList.contains("is-on")) location.hash = "#/" + id.replace(/^view-/, "");
         else target.scrollIntoView({ behavior: "smooth" });

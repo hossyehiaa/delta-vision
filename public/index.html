@@ -1675,6 +1675,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
 
         <div class="ws-actions">
           <button class="btn btn-lime btn-lg" id="run-btn" data-i18n="ws.run"></button>
+          <button class="btn btn-ghost" id="history-btn" data-i18n="ws.historyBtn" hidden></button>
           <button class="btn btn-ghost" id="compare-btn" data-i18n="ws.compareBtn"></button>
         </div>
       </div>
@@ -1866,6 +1867,20 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
 
 <div id="toast" class="toast" role="status" aria-live="polite"></div>
 
+<dialog class="dialog" id="history-dialog">
+  <div class="dialog-inner">
+    <div class="dialog-head">
+      <h2 data-i18n="ws.history.title"></h2>
+      <button class="round-btn round-ghost" id="history-close">
+        <span class="sr-only" data-i18n="ws.history.close"></span>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </button>
+    </div>
+    <p class="hint" data-i18n="ws.history.text"></p>
+    <div class="table-wrap"><table class="dv-table" id="history-table"></table></div>
+    <p class="hint" id="history-empty" hidden data-i18n="ws.history.empty"></p>
+  </div>
+</dialog>
 <dialog class="dialog" id="compare-dialog">
   <div class="dialog-inner">
     <div class="dialog-head">
@@ -2926,6 +2941,182 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
   };
 });
 
+/*
+ * Delta Vision — srv.js (client)
+ * Server-backed auth + run history for the deployed build (Vercel + Neon), with graceful
+ * fallback to the local demo auth (auth.js) when the API is not reachable — the page stays
+ * 100% functional offline either way.
+ *
+ * Contract with app.js: exposes the same surface as DVAuth (signup/login/logout/session/
+ * ensureDemo/DEMO) but async where the server is involved. app.js's small adapter
+ * (srvAdapter in app.js) bridges the difference.
+ */
+(function (root, factory) {
+  if (typeof module === "object" && module.exports) module.exports = factory(require("./auth.js"));
+  else root.DVSrv = factory(root.DVAuth);
+})(typeof self !== "undefined" ? self : this, function (A) {
+  "use strict";
+
+  var KEY_TOKEN = "dv_token", KEY_SRV_USER = "dv_srv_user";
+  // API base: same-origin "/api" when served over http(s); for file:// pages set
+  // window.DV_API_BASE = "https://your-deployment.vercel.app" (or an absolute base) so the
+  // single-file build can still reach a deployed backend.
+  var API = (function () {
+    try {
+      if (typeof self.DV_API_BASE === "string" && self.DV_API_BASE) return self.DV_API_BASE;
+      if (/^https?:$/.test(location.protocol)) return "";  // same-origin /api
+    } catch (e) { /* older browsers */ }
+    return null;   // file:// or unknown → unavailable until an absolute base is given
+  })();
+  var available = null;    // tri-state: null unknown, true up, false down
+
+  // ------------------------------------------------------------------ storage
+  function store() { try { return typeof localStorage !== "undefined" ? localStorage : null; } catch (e) { return null; } }
+  function readJSON(k) { var s = store(); if (!s) return null; try { return JSON.parse(s.getItem(k) || "null"); } catch (e) { return null; } }
+  function writeJSON(k, v) { var s = store(); if (!s) return false; try { if (v == null) s.removeItem(k); else s.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; } }
+  function token() { return readJSON(KEY_TOKEN); }
+
+  // ------------------------------------------------------------------ fetch with timeout
+  function call(method, path, body) {
+    if (API === null) { var off = new Error("OFFLINE"); off.code = "OFFLINE"; return Promise.reject(off); }
+    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, 12000);
+    var opt = { method: method, headers: {} };
+    var tk = token();
+    if (tk) opt.headers.Authorization = "Bearer " + tk;
+    if (body !== undefined) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+    if (ctl) opt.signal = ctl.signal;
+    return fetch(API + path, opt).then(function (res) {
+      clearTimeout(timer);
+      var j = null;
+      return res.json().catch(function () { return {}; }).then(function (parsed) {
+        j = parsed;
+        if (!res.ok) {
+          var e = new Error((j && j.error) || ("HTTP_" + res.status));
+          e.code = (j && j.error) || ("HTTP_" + res.status);
+          e.errors = j && j.errors;
+          throw e;
+        }
+        return j;
+      });
+    }, function (err) {
+      clearTimeout(timer);
+      var e = new Error("OFFLINE");
+      e.code = "OFFLINE";
+      throw e;
+    });
+  }
+
+  // ------------------------------------------------------------------ availability probe (cached)
+  function probe() {
+    if (API === null) { available = false; }
+    if (available !== null) return Promise.resolve(available);
+    return call("GET", "/api/health").then(function (j) {
+      available = j && j.ok ? true : false;
+      return available;
+    }, function () { available = false; return false; });
+  }
+
+  // ------------------------------------------------------------------ session shape shared with app.js
+  function srvSession(u) {
+    // mimic DVAuth.session() fields + keep the server token
+    return { userId: u.id, email: u.email, name: u.name, org: u.org || "", since: u.created || new Date().toISOString(), server: true };
+  }
+  function saveSession(j) {
+    writeJSON(KEY_TOKEN, j.token);
+    writeJSON(KEY_SRV_USER, j.user);
+    return srvSession(j.user);
+  }
+  function clearSession() { writeJSON(KEY_TOKEN, null); writeJSON(KEY_SRV_USER, null); }
+
+  // ------------------------------------------------------------------ API
+  function signup(form) {
+    // validate locally first for instant feedback (same rules as the server)
+    var v = A.validate(form);
+    if (!v.ok) return Promise.resolve({ ok: false, error: "INVALID", errors: v.errors, offline: false });
+    return probe().then(function (up) {
+      if (!up) {
+        var local = A.signup(form);          // offline fallback (localStorage demo)
+        local.offline = true;
+        return local;
+      }
+      return call("POST", "/api/auth/signup", { name: v.name, email: v.email, password: v.password, org: v.org })
+        .then(function (j) { return { ok: true, user: j.user, session: saveSession(j), offline: false }; })
+        .catch(function (e) {
+          if (e.code === "EMAIL_TAKEN" || (e.errors && Object.keys(e.errors).length)) {
+            return { ok: false, error: e.code || "INVALID", errors: e.errors || { email: "EMAIL_TAKEN" }, offline: false };
+          }
+          var fb = A.signup(form); fb.offline = true; fb.serverError = e.code || "SERVER";
+          return fb;
+        });
+    });
+  }
+
+  function login(email, password) {
+    return probe().then(function (up) {
+      if (!up) { var local = A.login(email, password); local.offline = true; return local; }
+      return call("POST", "/api/auth/login", { email: email, password: password })
+        .then(function (j) { return { ok: true, user: j.user, session: saveSession(j), offline: false }; })
+        .catch(function (e) {
+          if (e.code === "OFFLINE") { var fb = A.login(email, password); fb.offline = true; return fb; }
+          return { ok: false, error: "BAD_CREDENTIALS", offline: false };
+        });
+    });
+  }
+
+  function demo() {
+    return probe().then(function (up) {
+      if (!up) { var r = A.ensureDemo(); var l = A.login(A.DEMO.email, A.DEMO.password); l.offline = true; return l; }
+      return call("POST", "/api/auth/demo", {})
+        .then(function (j) { return { ok: true, user: j.user, session: saveSession(j), offline: false }; })
+        .catch(function () { var fb = A.login(A.DEMO.email, A.DEMO.password); fb.offline = true; return fb; });
+    });
+  }
+
+  function logout() {
+    var wasServer = !!token();
+    clearSession();
+    A.logout();
+    return wasServer;
+  }
+
+  function session() {
+    // server session first (token present + cached user), else local demo session.
+    // When the API is known-down, prefer the local session so the page stays usable.
+    var u = readJSON(KEY_SRV_USER);
+    if (u && token() && available !== false) return srvSession(u);
+    return A.session();
+  }
+
+  // ------------------------------------------------------------------ runs history
+  function saveRun(run) {
+    if (!token()) return Promise.resolve({ ok: false, error: "AUTH" });
+    return call("POST", "/api/runs", run).then(function (j) { return { ok: true, id: j.id }; });
+  }
+  function listRuns() {
+    if (!token()) return Promise.resolve({ ok: false, error: "AUTH", runs: [] });
+    return call("GET", "/api/runs").then(function (j) { return { ok: true, runs: j.runs || [] }; });
+  }
+  function getRun(id) {
+    return call("GET", "/api/runs/" + id).then(function (j) { return j.run; });
+  }
+  function deleteRun(id) {
+    return call("DELETE", "/api/runs/" + id).then(function (j) { return { ok: true }; });
+  }
+
+  // test/debug hook: force the availability state ("true"|"false"|null)
+  function setAvailable(v) { available = v === true || v === "true" ? true : (v === false || v === "false" ? false : null); }
+
+  return {
+    signup: signup, login: login, demo: demo, logout: logout, session: session,
+    setAvailable: setAvailable, get available() { return available; },
+    DEMO: A.DEMO,
+    saveRun: saveRun, listRuns: listRuns, getRun: getRun, deleteRun: deleteRun,
+    isServer: function () { return !!token(); },
+    probe: probe
+  };
+});
+
 /* Generated by scripts/delta_vision/ref/make_data.py from the engine's spectral data file — do not edit by hand. */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
@@ -3206,7 +3397,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
         few: "{n} points over {k} classes — below the engine's minimum of 20 points over 2 classes, so automatic anchors would be used.",
         ok: "{n} points over {k} classes — enough to train on your own points."
       },
-      run: "Classify", compare: "Compare algorithms", running: "Running…",
+      run: "Classify", compare: "Compare algorithms", historyBtn: "History", running: "Running…",
       needAoi: "Define a study area first (upload, draw or coordinates).",
       aoi: {
         clear: "Remove study area",
@@ -3514,7 +3705,7 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
         few: "{n} نقطة على {k} فئات — أقل من حد المحرك (20 نقطة على فئتين)، فستُستخدم مراسٍ تلقائية.",
         ok: "{n} نقطة على {k} فئات — تكفي للتدريب على نقاطك."
       },
-      run: "صنّف", compare: "قارن الخوارزميات", running: "جارٍ التنفيذ…",
+      run: "صنّف", compare: "قارن الخوارزميات", historyBtn: "السجل", running: "جارٍ التنفيذ…",
       needAoi: "حدّد منطقة الدراسة أولًا (بالرفع أو الرسم أو الإحداثيات).",
       aoi: {
         clear: "إزالة منطقة الدراسة",
@@ -3701,6 +3892,7 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
   "use strict";
 
   var I = window.DVI18N, D = window.DVData, G = window.DVGeo, A = window.DVAuth;
+  var S = window.DVSrv;   // server adapter (deployed build); undefined in the pure-local single file
   var KEY_PREFS = "dv_prefs";
 
   // ---------------------------------------------------------------- state
@@ -3748,9 +3940,9 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
     if (VIEWS.indexOf(name) < 0) name = "home";
     var next = null;
     if (name === "login" || name === "signup") {
-      if (A.session()) next = "workspace";
+      if (authSession()) next = "workspace";
     } else if (name === "workspace" || name === "upload") {
-      if (!A.session()) { next = "login"; try { sessionStorage.setItem("dv_next", "#/" + h); } catch (e) { /* ignore */ } }
+      if (!authSession()) { next = "login"; try { sessionStorage.setItem("dv_next", "#/" + h); } catch (e) { /* ignore */ } }
     }
     if (next) { location.hash = "#/" + next; return; }
     VIEWS.forEach(function (v) { var node = $("#view-" + v); if (node) node.classList.toggle("is-on", v === name); });
@@ -3908,13 +4100,14 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
     langBtn.setAttribute("aria-label", t("nav.langLabel"));
     langBtn.addEventListener("click", toggleLang);
     box.appendChild(langBtn);
-    var sess = A.session();
+    var sess = authSession();
     if (!sess) {
       var a1 = el("a", "btn btn-ghost", t("nav.login")); a1.href = "#/login"; box.appendChild(a1);
       var a2 = el("a", "btn btn-lime", t("nav.getStarted")); a2.href = "#/signup"; box.appendChild(a2);
     } else {
       var acc = el("div", "account");
       var btn = el("button", "account-btn");
+      btn.id = "account-btn";
       btn.type = "button";
       var av = el("span", "avatar", (sess.name || sess.email || "?").trim().charAt(0).toUpperCase() || "?");
       var nm = el("span", null, (sess.name || sess.email).split("@")[0]);
@@ -3928,7 +4121,7 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
       menu.appendChild(who);
       var out = el("button", "btn btn-ghost btn-sm", t("nav.logout"));
       out.type = "button";
-      out.addEventListener("click", function () { A.logout(); toast(t("common.toasts.loggedOut")); renderNavAuth(); route(); });
+      out.addEventListener("click", function () { authLogout(); toast(t("common.toasts.loggedOut")); renderNavAuth(); route(); });
       menu.appendChild(out);
       btn.addEventListener("click", function (ev) {
         ev.stopPropagation();
@@ -3948,6 +4141,29 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
     renderNavAuth(); renderHome(); renderWorkspaceChrome(); renderAlgorithmPage(); renderUploadPage(); renderGuidePage(); applyModeBadge();
     toast(state.lang === "ar" ? "تم التبديل إلى العربية" : "Switched to English");
   }
+
+  // ---------------------------------------------------------------- async auth (server, with local fallback)
+  // Wraps DVSrv so the rest of app.js keeps calling login/signup/demo/logout/session synchronously:
+  // the forms disable their submit button while the promise settles.
+  function authLogin(email, password) {
+    if (!S) { var r = A.login(email, password); return Promise.resolve(r); }
+    return S.login(email, password);
+  }
+  function authSignup(form) {
+    if (!S) { var r = A.signup(form); return Promise.resolve(r); }
+    return S.signup(form);
+  }
+  function authDemo() {
+    if (!S) { A.ensureDemo(); var r = A.login(A.DEMO.email, A.DEMO.password); return Promise.resolve(r); }
+    return S.demo();
+  }
+  function authLogout() {
+    if (S) S.logout(); else A.logout();
+  }
+  function authSession() {
+    return S ? S.session() : A.session();
+  }
+  function isServerAuth() { return !!(S && S.isServer && S.isServer()); }
 
   // ---------------------------------------------------------------- auth forms
   function fieldError(form, key, msg) {
@@ -3971,16 +4187,22 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
       if (!email) { fieldError(lf, "email", t("login.required")); bad = true; }
       if (!password) { fieldError(lf, "password", t("login.required")); bad = true; }
       if (bad) return;
-      var res = A.login(email, password);
-      if (res.ok) { afterLogin(t("common.toasts.welcomed", { name: res.user.name || res.user.email })); }
-      else if (res.error === "BAD_CREDENTIALS" || res.error === "STORAGE") { formError(lf, t("login.error." + res.error)); }
-      else formError(lf, t("common.unknownError", { code: res.error || "?" }));
+      var submitBtn = lf.querySelector("button[type=submit]");
+      submitBtn.disabled = true;
+      authLogin(email, password).then(function (res) {
+        submitBtn.disabled = false;
+        if (res.ok) { afterLogin(t("common.toasts.welcomed", { name: res.user.name || res.user.email })); }
+        else if (res.error === "BAD_CREDENTIALS" || res.error === "STORAGE") { formError(lf, t("login.error." + res.error)); }
+        else formError(lf, t("common.unknownError", { code: res.error || "?" }));
+      });
     });
     $("#demo-btn").addEventListener("click", function () {
-      A.ensureDemo();
-      var res = A.login(A.DEMO.email, A.DEMO.password);
-      if (res.ok) afterLogin(t("common.toasts.welcomed", { name: res.user.name }));
-      else toast(t("common.error"), true);
+      var btn = $("#demo-btn"); btn.disabled = true;
+      authDemo().then(function (res) {
+        btn.disabled = false;
+        if (res.ok) afterLogin(t("common.toasts.welcomed", { name: res.user.name }));
+        else toast(t("common.error"), true);
+      });
     });
 
     var sf = $("#signup-form");
@@ -3988,15 +4210,23 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
       ev.preventDefault(); clearErrors(sf);
       var name = $("#su-name").value.trim(), org = $("#su-org").value.trim();
       var email = $("#su-email").value.trim(), password = $("#su-password").value, confirm = $("#su-confirm").value;
-      var res = A.signup({ name: name, email: email, password: password, org: org, confirm: confirm });
-      if (res.ok) {
-        A.login(email, password); // standard UX: signing up also opens the session
-        afterLogin(t("common.toasts.signedUp", { name: res.user.name }));
-      }
-      else if (res.errors) {
-        Object.keys(res.errors).forEach(function (k) { fieldError(sf, k, t("signup.error." + k)); });
-        if (res.error === "STORAGE" || res.error === "EMAIL_TAKEN") formError(sf, t("signup.error." + res.error));
-      } else if (res.error) { formError(sf, t("signup.error." + res.error) !== "signup.error." + res.error ? t("signup.error." + res.error) : t("common.unknownError", { code: res.error })); }
+      var submitBtn = sf.querySelector("button[type=submit]");
+      submitBtn.disabled = true;
+      authSignup({ name: name, email: email, password: password, org: org, confirm: confirm }).then(function (res) {
+        submitBtn.disabled = false;
+        if (res.ok) {
+          if (res.session) afterLogin(t("common.toasts.signedUp", { name: res.user.name }));
+          else {
+            // offline fallback path: open the local session synchronously
+            A.login(email, password);
+            afterLogin(t("common.toasts.signedUp", { name: res.user.name }));
+          }
+        }
+        else if (res.errors) {
+          Object.keys(res.errors).forEach(function (k) { fieldError(sf, k, t("signup.error." + k)); });
+          if (res.error === "STORAGE" || res.error === "EMAIL_TAKEN") formError(sf, t("signup.error." + res.error));
+        } else if (res.error) { formError(sf, t("signup.error." + res.error) !== "signup.error." + res.error ? t("signup.error." + res.error) : t("common.unknownError", { code: res.error })); }
+      });
     });
   }
   function afterLogin(msg) {
@@ -4743,6 +4973,7 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
       showOverlay();
       renderResults();
       renderLegend();
+      saveRunSnapshot(input, res);   // server history (no-op when offline / not signed in via server)
       done();
     };
     if (isLive()) {
@@ -5097,6 +5328,146 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
     $("#compare-close").addEventListener("click", function () { dlg.close(); });
     dlg.addEventListener("click", function (ev) { if (ev.target === dlg) dlg.close(); });
   }
+  // ---------------------------------------------------------------- run history (server)
+  // A snapshot stores the RunInput (aoiGeo, algorithm, season, params, samplePoints) plus the
+  // compact results (classes/areas/mode) — NOT the preview image (too big); reopening re-runs
+  // the local preview deterministically (seeded by the same input) and restores the numbers.
+  function snapshotResults(r) {
+    return {
+      algorithm: r.algorithm, season: r.season, dateFrom: r.dateFrom, dateTo: r.dateTo,
+      mode: r.mode || "preview", oa: r.oa != null ? r.oa : null, kappa: r.kappa != null ? r.kappa : null,
+      isKmeans: !!r.isKmeans, nImages: r.nImages || null, nTrain: r.nTrain || null, nVal: r.nVal || null,
+      sampleSource: r.sampleSource || null, durationMs: r.durationMs || null,
+      classes: r.classes.map(function (c) { return { classId: c.classId, percent: c.percent, areaM2: c.areaM2 }; })
+    };
+  }
+  var suppressSave = false;   // set while reopening a historical run (no duplicate row)
+
+  function saveRunSnapshot(input, res) {
+    if (!S || !S.isServer()) return;   // local-only build or offline: history is a server feature
+    if (suppressSave) { suppressSave = false; return; }
+    S.saveRun({
+      algorithm: input.algorithm, season: input.season, year: input.year,
+      mode: res.mode === "live" ? "live" : "preview",
+      aoiName: input.aoiName || "", aoiGeo: input.aoiGeo,
+      samplePoints: input.samplePoints || [], params: input.params || {},
+      results: snapshotResults(res)
+    }).then(function (r) { if (r && r.ok) updateHistoryButton(); }, function () { /* silent: history is best-effort */ });
+  }
+
+  function updateHistoryButton() {
+    var btn = $("#history-btn");
+    if (!btn) return;
+    btn.hidden = !S;                       // no adapter (pure local file) → no history
+    if (S) S.listRuns().then(function (r) {
+      btn.hidden = !(r && r.ok && r.runs && r.runs.length);
+    }, function () { btn.hidden = true; });
+  }
+
+  function initHistory() {
+    var dlg = $("#history-dialog");
+    if (!dlg) return;
+    $("#history-close").addEventListener("click", function () { dlg.close(); });
+    dlg.addEventListener("click", function (ev) { if (ev.target === dlg) dlg.close(); });
+    $("#history-btn").addEventListener("click", function () {
+      dlg.showModal();
+      renderHistoryTable();
+    });
+  }
+
+  function renderHistoryTable() {
+    var table = $("#history-table"), empty = $("#history-empty");
+    table.innerHTML = "";
+    empty.hidden = true;
+    var thead = el("thead"), trh = el("tr");
+    [t("ws.history.when"), t("ws.history.algo"), t("ws.history.area"), t("ws.history.mode"), ""].forEach(function (h, i) {
+      var th = el("th", null, h);
+      if (i === 1 || i === 2) th.className = "wrap";
+      trh.appendChild(th);
+    });
+    thead.appendChild(trh); table.appendChild(thead);
+    var tbody = el("tbody");
+    table.appendChild(tbody);
+    if (!S) { empty.hidden = false; tbody.appendChild(el("tr", null, el("td", "wrap", t("ws.history.empty")))); return; }
+    S.listRuns().then(function (r) {
+      if (!r || !r.ok || !r.runs || !r.runs.length) {
+        empty.hidden = false;
+        var tb = table.querySelector("tbody");
+        if (tb) tb.innerHTML = "";
+        return;
+      }
+      r.runs.forEach(function (run) {
+        var tr = el("tr");
+        td(tr, whenLabel(run.createdAt), "wrap");
+        td(tr, t("algo.names." + run.algorithm) !== "algo.names." + run.algorithm ? t("algo.names." + run.algorithm) : run.algorithm, "wrap");
+        td(tr, run.aoiName || "—", "wrap");
+        var modeTd = td(tr, "", "wrap");
+        modeTd.appendChild(el("span", "preview-badge" + (run.mode === "live" ? " is-live" : ""), run.mode === "live" ? "Earth Engine" : t("ws.results.modePreview")));
+        var act = el("td", "wrap");
+        var open = el("button", "btn btn-sm btn-lime", t("ws.history.open"));
+        open.type = "button";
+        open.addEventListener("click", function () { openRun(run.id); });
+        var del = el("button", "btn btn-sm btn-ghost", t("ws.history.delete"));
+        del.type = "button";
+        del.addEventListener("click", function () {
+          S.deleteRun(run.id).then(function () {
+            toast(t("ws.history.deleted"));
+            renderHistoryTable(); updateHistoryButton();
+          }, function () { toast(t("ws.history.error"), true); });
+        });
+        act.appendChild(open); act.appendChild(document.createTextNode(" "));
+        act.appendChild(del);
+        tr.appendChild(act);
+        tbody.appendChild(tr);
+      });
+    }, function () { empty.hidden = false; });
+  }
+
+  function whenLabel(iso) {
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return String(iso);
+    var now = new Date(), sameDay = d.toDateString() === now.toDateString();
+    var hm = ("0" + d.getHours()).slice(-2) + ":" + ("0" + d.getMinutes()).slice(-2);
+    if (state.lang === "ar") return d.toLocaleDateString("ar-EG") + " " + hm;
+    return (sameDay ? "today " : d.toLocaleDateString("en-GB") + " ") + hm;
+  }
+
+  function openRun(id) {
+    if (!S) return;
+    S.getRun(id).then(function (run) {
+      if (!run) { toast(t("ws.history.error"), true); return; }
+      $("#history-dialog").close();
+      // restore the AOI exactly as the upload flow does
+      var aoi = {
+        kind: "history",
+        name: run.aoiName || "",
+        fc: run.aoiGeo,
+        areaM2: 0, parcels: [], crsLabel: "WGS84", warnings: []
+      };
+      var area = 0, parcels = [];
+      run.aoiGeo.features.forEach(function (f) {
+        var a = G.geometryAreaM2(f.geometry);
+        area += a;
+        parcels.push({ name: (f.properties && (f.properties.name || f.properties.NAME)) || (run.aoiName || "AOI"), areaM2: a, properties: f.properties || {} });
+      });
+      aoi.areaM2 = area; aoi.parcels = parcels;
+      setAoi(aoi);
+      // restore season/year/algorithm/params/samples
+      state.season = run.season; state.year = run.year || state.year;
+      state.algorithm = run.algorithm;
+      if (run.params) Object.keys(run.params).forEach(function (k) { if (state.params[k] != null || I.PARAMS[k]) state.params[k] = run.params[k]; });
+      renderWorkspaceChrome();
+      // restore samples markers
+      state.samples = (run.samplePoints || []).map(function (sp) { return { classId: sp.classId, lon: sp.lon, lat: sp.lat }; });
+      renderSamples();
+      toast(t("ws.history.loaded"));
+      // re-run the local preview to redraw the map (deterministic: same input → same seed);
+      // do not re-save: this row already exists in the history
+      suppressSave = true;
+      runPreview(run.algorithm);
+    }, function () { toast(t("ws.history.error"), true); });
+  }
+
   function renderCompareTable() {
     var table = $("#compare-table");
     table.innerHTML = "";
@@ -5327,6 +5698,8 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
     initUploadTab();
     initSamples();
     initCompare();
+    initHistory();
+    updateHistoryButton();
     initUploadPage();
     initTabs();
     renderAlgorithmPage();
@@ -5356,7 +5729,7 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
       if (!s) return;
       var id = s.getAttribute("data-scroll");
       var target = document.getElementById(id === "workspace" ? "view-workspace" : id);
-      if (id === "workspace" && !A.session()) { location.hash = "#/login"; return; }
+      if (id === "workspace" && !authSession()) { location.hash = "#/login"; return; }
       if (target) {
         if (target.classList.contains("view") && !target.classList.contains("is-on")) location.hash = "#/" + id.replace(/^view-/, "");
         else target.scrollIntoView({ behavior: "smooth" });
