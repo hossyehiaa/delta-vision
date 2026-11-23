@@ -32,8 +32,10 @@ jobs:
         run: node test/i18n.test.js src/i18n.js src/data.js
       - name: install pg + playwright
         run: |
-          npm install pg --no-audit --no-fund
-          npx playwright@1.57.0 install --with-deps chromium
+          # playwright must be a real dependency so the tests can require() it;
+          # then its own CLI downloads the matching chromium
+          npm install --no-audit --no-fund pg playwright@1.57.0
+          npx playwright install --with-deps chromium
       - name: live-backend E2E (12 checks)
         run: node test/live.test.js public/index.html test/fixtures test/fixtures/bourj
       - name: server-auth E2E (15 checks)
