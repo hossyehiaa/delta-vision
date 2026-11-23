@@ -42,7 +42,7 @@ ok(badPh.length === 0, "same {placeholders} in both languages" + (badPh.length ?
 ok(junk.length === 0, "no junk tokens in strings" + (junk.length ? ": " + junk.join(", ") : ""));
 // the only Arabic leaves that are legitimately Latin: the wordmark, the language toggle (always written in the
 // OTHER language), two numbers, two e-mail examples, a product name
-const LATIN_OK = ["brand.name", "nav.langLabel", "home.stats.0.value", "home.stats.1.value", "login.emailPh", "signup.emailPh", "ws.results.modeLive"];
+const LATIN_OK = ["brand.name", "nav.langLabel", "home.stats.0.value", "home.stats.1.value", "login.emailPh", "signup.emailPh", "ws.results.modeLive", "ws.results.pa", "ws.results.ua", "ws.results.f1", "ws.results.download", "ws.map.scene.ndvi", "ws.map.scene.ndwi"];
 const latinOnly = ar.filter(([, v]) => !/[\u0600-\u06FF]/.test(v)).map(([k, v]) => k + "=" + JSON.stringify(v));
 ok(latinOnly.length === LATIN_OK.length && latinOnly.every((s) => LATIN_OK.indexOf(s.split("=")[0]) >= 0), "Arabic leaves contain Arabic, except the allow-list (" + latinOnly.join(", ") + ")");
 const enArabic = en.filter(([k, v]) => /[\u0600-\u06FF]/.test(v) && k !== "nav.langLabel").map(([k]) => k);

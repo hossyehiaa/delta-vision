@@ -1,6 +1,17 @@
 {
   "$schema": "https://openapi.vercel.sh/version.json",
-  "buildCommand": "python3 build.py",
+  "buildCommand": "python3 build.py && bash scripts/build_gee.sh",
   "outputDirectory": "public",
-  "cleanUrls": true
+  "cleanUrls": true,
+  "functions": {
+    "api/gee/run.js": {
+      "maxDuration": 300
+    },
+    "api/gee/scene.js": {
+      "maxDuration": 120
+    },
+    "api/gee/ndvi-point.js": {
+      "maxDuration": 120
+    }
+  }
 }

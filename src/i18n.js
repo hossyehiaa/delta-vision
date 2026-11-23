@@ -135,7 +135,7 @@
       home: "Home", workspace: "Workspace", algorithms: "Algorithms", upload: "Data upload", guide: "Guide",
       login: "Log in", logout: "Log out", getStarted: "Get started", menu: "Menu", closeMenu: "Close menu", account: "Account", langLabel: "العربية"
     },
-    units: { feddan: "feddan", km2: "km²", ha: "hectares", m2: "m²" },
+    units: { feddan: "feddan", km2: "km²", ha: "hectares", m2: "m²", ton: "t" },
     common: {
       back: "Back", cancel: "Cancel", apply: "Apply", clear: "Clear", remove: "Remove", replace: "Replace", download: "Download", print: "Print",
       loading: "Loading…", preview: "Preview", close: "Close", optional: "optional", error: "Something went wrong", unknownError: "Unexpected error ({code}).",
@@ -278,7 +278,7 @@
         hint: "The area is on the map. Choose a season and an algorithm, then press Classify.", removePoint: "Remove point",
         outlinesCapped: "Outlines are drawn for the first {n} of {total} features; the areas of all of them are measured.", crsLatLon: "Longitude/latitude (WGS84)"
       },
-      map: { satellite: "Satellite", streets: "Streets", opacity: "Class overlay opacity", legend: "Classes", fit: "Zoom to the study area", outline: "Study area", aria: "Study-area map" },
+      map: { satellite: "Satellite", streets: "Streets", opacity: "Class overlay opacity", legend: "Classes", fit: "Zoom to the study area", outline: "Study area", aria: "Study-area map", scene: { truecolor: "True colour", ndvi: "NDVI", ndwi: "NDWI" } },
       results: {
         title: "Results", run: "Run: {algo} · {season} · {period}",
         total: "Total area", parcels: "Parcels", oa: "Overall accuracy", kappa: "Kappa", notComputed: "not computed in preview",
@@ -290,14 +290,27 @@
         cluster: "Cluster {n}", clusters: "k-means clusters (not crop names)",
         mode: "Mode", modePreview: "Illustrative preview", modeLive: "Earth Engine",
         samples: "Samples", auto: "automatic anchors", manual: "{n} of your points", images: "Scenes", train: "Training px", val: "Validation px",
-        cell: "Preview cell: about {m} m", parcelsCsv: "Parcels CSV"
+        cell: "Preview cell: about {m} m", parcelsCsv: "Parcels CSV", download: "GeoTIFF",
+        pa: "PA", ua: "UA", f1: "F1", support: "n",
+        confusionTitle: "Confusion matrix", confusionHint: "Rows are the reference class, columns the prediction; the green diagonal is what was classified correctly.",
+        dssTitle: "Yield & water estimate", dssHint: "Indicative Egyptian figures per feddan for the northern Delta — decision support, not a field survey.",
+        dssCrop: "Crop", dssYield: "Est. yield (t)", dssWater: "Water need (m³)", dssTotalYield: "Est. yield", dssTotalWater: "Water need"
       },
       compareBtn: "Compare algorithms",
+      leagueBtn: "Accuracy league",
       compare: {
         close: "Close",
         title: "Compare algorithms", text: "All 11 algorithms on the same study area and season. Pick one to see its preview map; in a connected build this table also shows overall accuracy and Kappa for each.",
         cols: { algo: "Algorithm", family: "Family", samples: "Training samples", accuracy: "Accuracy", params: "Parameters", choose: "Show" }
       },
+      league: {
+        title: "The accuracy league", running: "Training and scoring the nine algorithms…",
+        hint: "Every supervised algorithm trains on the same samples and is scored on the same withheld 30 %. Load the winner to see its map.",
+        loadBest: "Show the winner's map", failed: "failed", winner: "winner",
+        cols: { algo: "Algorithm", oa: "Overall accuracy", kappa: "Kappa" }
+      },
+      gee: { live: "Live — Earth Engine", preview: "Preview mode", checking: "Connecting…" },
+      ndvi: { title: "NDVI at this point", empty: "No cloud-free observations at this point in this period.", loading: "Loading…" },
       notes: {
         preview: "Illustrative preview: not a model output.",
         no_accuracy: "Fewer than 10 validation points were left, so no accuracy was computed.",
@@ -327,7 +340,24 @@
       BAD_CREDENTIALS: "E-mail or password is incorrect.",
       STORAGE: "This browser refuses to store data (private mode?).",
       BACKEND: "The classification server did not answer. Try again in a moment.",
-      BACKEND_BAD: "The classification server answered in a format this page cannot read."
+      BACKEND_BAD: "The classification server answered in a format this page cannot read.",
+      no_images: "No Sentinel-2 scenes for this period and area — try a longer period or a higher cloud limit.",
+      too_few_samples: "Too few samples — the minimum is 20 points (30+ per class is recommended).",
+      need_two_classes: "Sample at least two different classes before supervised classification.",
+      samples_outside_aoi: "None of the sample points covered a valid pixel — keep them inside the study area on cloud-free ground.",
+      bad_date_range: "Invalid date range — the start date must be before the end date.",
+      gee_not_configured: "The Earth Engine key is not configured on the server — the app runs in preview mode.",
+      mahalanobis_needs_samples: "The Mahalanobis classifier needs many samples per class to invert the covariance matrix — add points or pick another algorithm.",
+      all_algorithms_failed: "Every algorithm failed to train on these samples — check that the points are inside the study area and retry.",
+      mlp_needs_classes: "The neural network needs at least two different classes plus some validation points. Add more points and retry.",
+      mlp_training_failed: "Neural-network training failed on this data — try different hidden units/epochs, or another algorithm.",
+      aoi_invalid: "Invalid area coordinates — check the longitude/latitude ranges.",
+      unknown_algorithm: "Unknown algorithm.",
+      bad_point: "Invalid point coordinates.",
+      run_failed: "The classification failed — please try again.",
+      scene_failed: "Failed to load the satellite layer.",
+      ndvi_failed: "Failed to compute the NDVI curve at this point.",
+      job_failed: "The job failed on Google's servers — please try again."
     },
     warns: {
       PRJ_MISSING_LATLON: "No .prj: read as longitude/latitude.",
@@ -443,7 +473,7 @@
       home: "الرئيسية", workspace: "مساحة العمل", algorithms: "الخوارزميات", upload: "رفع البيانات", guide: "الدليل",
       login: "تسجيل الدخول", logout: "تسجيل الخروج", getStarted: "ابدأ الآن", menu: "القائمة", closeMenu: "إغلاق القائمة", account: "الحساب", langLabel: "English"
     },
-    units: { feddan: "فدان", km2: "كم²", ha: "هكتار", m2: "م²" },
+    units: { feddan: "فدان", km2: "كم²", ha: "هكتار", m2: "م²", ton: "طن" },
     common: {
       back: "رجوع", cancel: "إلغاء", apply: "تطبيق", clear: "مسح", remove: "إزالة", replace: "استبدال", download: "تنزيل", print: "طباعة",
       loading: "جارٍ التحميل…", preview: "معاينة", close: "إغلاق", optional: "اختياري", error: "حدث خطأ", unknownError: "خطأ غير متوقع ({code}).",
@@ -586,7 +616,7 @@
         hint: "المنطقة على الخريطة. اختر موسمًا وخوارزمية، ثم اضغط «صنّف».", removePoint: "إزالة النقطة",
         outlinesCapped: "تُرسم حدود أول {n} من {total} عنصرًا؛ وتُقاس مساحاتها كلها.", crsLatLon: "خط طول وخط عرض (WGS84)"
       },
-      map: { satellite: "قمر صناعي", streets: "شوارع", opacity: "شفافية طبقة الفئات", legend: "الفئات", fit: "تكبير إلى منطقة الدراسة", outline: "منطقة الدراسة", aria: "خريطة منطقة الدراسة" },
+      map: { satellite: "قمر صناعي", streets: "شوارع", opacity: "شفافية طبقة الفئات", legend: "الفئات", fit: "تكبير إلى منطقة الدراسة", outline: "منطقة الدراسة", aria: "خريطة منطقة الدراسة", scene: { truecolor: "ألوان حقيقية", ndvi: "NDVI", ndwi: "NDWI" } },
       results: {
         title: "النتائج", run: "تشغيل: {algo} · {season} · {period}",
         total: "المساحة الكلية", parcels: "القطع", oa: "الدقة الكلية", kappa: "كابا", notComputed: "لا تُحسب في المعاينة",
@@ -598,14 +628,27 @@
         cluster: "عنقود {n}", clusters: "عناقيد K-means (ليست أسماء محاصيل)",
         mode: "الوضع", modePreview: "معاينة توضيحية", modeLive: "Earth Engine",
         samples: "العينات", auto: "مراسٍ تلقائية", manual: "{n} من نقاطك", images: "المشاهد", train: "بكسلات التدريب", val: "بكسلات التحقق",
-        cell: "خلية المعاينة: نحو {m} م", parcelsCsv: "CSV للقطع"
+        cell: "خلية المعاينة: نحو {m} م", parcelsCsv: "CSV للقطع", download: "GeoTIFF",
+        pa: "PA", ua: "UA", f1: "F1", support: "ع",
+        confusionTitle: "مصفوفة الارتباك", confusionHint: "الصفوف هي الفئة المرجعية والأعمدة هي التصنيف؛ القطر الأخضر هو ما صُنّف صحيحًا.",
+        dssTitle: "تقدير المحصول والاحتياج المائي", dssHint: "أرقام إرشادية مصرية للفدان في شمال الدلتا — دعم قرار، وليست مسحًا ميدانيًا.",
+        dssCrop: "المحصول", dssYield: "إنتاج تقديري (طن)", dssWater: "احتياج مائي (م³)", dssTotalYield: "الإنتاج التقديري", dssTotalWater: "الاحتياج المائي"
       },
       compareBtn: "قارن الخوارزميات",
+      leagueBtn: "دوري الدقة",
       compare: {
         close: "إغلاق",
         title: "مقارنة الخوارزميات", text: "كل الخوارزميات الـ11 على منطقة الدراسة والموسم نفسهما. اختر واحدة لرؤية خريطة معاينتها؛ في نسخة متصلة يعرض هذا الجدول أيضًا الدقة الكلية وكابا لكل خوارزمية.",
         cols: { algo: "الخوارزمية", family: "العائلة", samples: "عينات التدريب", accuracy: "الدقة", params: "الوسائط", choose: "عرض" }
       },
+      league: {
+        title: "دوري الدقة", running: "تدريب الخوارزميات التسع وحساب دقتها…",
+        hint: "تتدرب كل خوارزمية موجّهة على العينات نفسها وتُقيَّم على ٣٠٪ المحجوزة نفسها. اعرض خريطة الفائز بضغطة واحدة.",
+        loadBest: "اعرض خريطة الفائز", failed: "فشلت", winner: "الفائز",
+        cols: { algo: "الخوارزمية", oa: "الدقة الكلية", kappa: "كابا" }
+      },
+      gee: { live: "مباشر — Earth Engine", preview: "وضع المعاينة", checking: "جارٍ الاتصال…" },
+      ndvi: { title: "NDVI عند هذه النقطة", empty: "لا مشاهد صافية من السحاب عند هذه النقطة في هذه الفترة.", loading: "جارٍ التحميل…" },
       notes: {
         preview: "معاينة توضيحية: ليست مخرجات نموذج.",
         no_accuracy: "لم يتبقَّ 10 نقاط تحقق، لذلك لم تُحسب الدقة.",
@@ -635,7 +678,24 @@
       BAD_CREDENTIALS: "البريد الإلكتروني أو كلمة المرور غير صحيحة.",
       STORAGE: "هذا المتصفح يرفض حفظ البيانات (وضع التصفح الخاص؟).",
       BACKEND: "لم يستجب خادم التصنيف. حاول مرة أخرى بعد لحظات.",
-      BACKEND_BAD: "أجاب خادم التصنيف بصيغة لا تفهمها هذه الصفحة."
+      BACKEND_BAD: "أجاب خادم التصنيف بصيغة لا تفهمها هذه الصفحة.",
+      no_images: "لا توجد مشاهد Sentinel-2 لهذه الفترة والمنطقة — جرّب فترة أطول أو نسبة سحب أعلى.",
+      too_few_samples: "العينات قليلة جدًا — الحد الأدنى ٢٠ نقطة (ويُنصح بـ ٣٠ نقطة لكل فئة على الأقل).",
+      need_two_classes: "أدخل عينات لفئتين مختلفتين على الأقل قبل التصنيف الموجّه.",
+      samples_outside_aoi: "لم يُغطِّ أي من نقاط العينات بكسلًا صالحًا — تأكد أنها داخل منطقة الدراسة وعلى أرض صافية من السحاب.",
+      bad_date_range: "نطاق التواريخ غير صالح — يجب أن يسبق تاريخ البداية تاريخ النهاية.",
+      gee_not_configured: "مفتاح Earth Engine غير مُعد على الخادم — التطبيق يعمل في وضع المعاينة.",
+      mahalanobis_needs_samples: "تحتاج خوارزمية ماهالانوبيس عينات كثيرة لكل فئة لعكس مصفوفة التغاير — أضف نقاطًا أكثر أو اختر خوارزمية أخرى.",
+      all_algorithms_failed: "فشلت جميع الخوارزميات في التدريب على هذه العينات — تأكد أن النقاط داخل منطقة الدراسة ثم أعد المحاولة.",
+      mlp_needs_classes: "الشبكة العصبية تحتاج فئتين مختلفتين على الأقل مع بعض نقاط التحقق. أضف نقاطًا أكثر وأعد المحاولة.",
+      mlp_training_failed: "فشل تدريب الشبكة العصبية على هذه البيانات — جرّب عدد خلايا/دورات مختلف أو خوارزمية أخرى.",
+      aoi_invalid: "إحداثيات المنطقة غير صالحة — تأكد من نطاقات خطوط الطول/العرض.",
+      unknown_algorithm: "خوارزمية غير معروفة.",
+      bad_point: "إحداثيات النقطة غير صالحة.",
+      run_failed: "تعذّر تشغيل التصنيف — حاول مرة أخرى.",
+      scene_failed: "تعذّر تحميل الطبقة الفضائية.",
+      ndvi_failed: "تعذّر حساب منحنى NDVI عند هذه النقطة.",
+      job_failed: "تعذّر تنفيذ المهمة على خوادم جوجل — حاول مرة أخرى."
     },
     warns: {
       PRJ_MISSING_LATLON: "لا يوجد .prj: قُرئت الإحداثيات كخط طول وخط عرض.",

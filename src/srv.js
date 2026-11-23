@@ -164,12 +164,30 @@
   // test/debug hook: force the availability state ("true"|"false"|null)
   function setAvailable(v) { available = v === true || v === "true" ? true : (v === false || v === "false" ? false : null); }
 
+  // ------------------------------------------------------------------ live GEE layer
+  /** Same-origin (or DV_API_BASE) base the app talks to, e.g. "" or "https://…vercel.app". */
+  function apiBase() { return API; }
+  /** GET /api/gee/health → { ok, mode: "live" | "demo", jobs, error }. Never rejects. */
+  function geeHealth() {
+    return call("GET", "/api/gee/health").then(function (j) {
+      return {
+        ok: !!j.ok,
+        mode: j && j.mode === "live" ? "live" : "demo",
+        jobs: (j && j.jobs) || "sync",
+        error: (j && j.error) || null
+      };
+    }, function () {
+      return { ok: false, mode: "demo", jobs: "sync", error: "UNREACHABLE" };
+    });
+  }
+
   return {
     signup: signup, login: login, demo: demo, logout: logout, session: session,
     setAvailable: setAvailable, get available() { return available; },
     DEMO: A.DEMO,
     saveRun: saveRun, listRuns: listRuns, getRun: getRun, deleteRun: deleteRun,
     isServer: function () { return !!token(); },
-    probe: probe
+    probe: probe,
+    apiBase: apiBase, geeHealth: geeHealth
   };
 });

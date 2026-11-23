@@ -27,7 +27,17 @@
     results: null,
     secondUnit: "km2",
     drawing: null,    // { mode:"poly"|"rect", points:[], first }
-    picking: false
+    picking: false,
+    gee: { checked: false, live: false, url: null }  // real Earth Engine backend on the server
+  };
+  // Indicative Egyptian agronomy per class code (tons/feddan, m³/feddan) — the same
+  // decision-support table the Basira engine uses (northern Delta / coastal belt).
+  var CROP_DSS = {
+    WHT: { yieldTFed: 2.8, waterM3Fed: 1900 }, MZE: { yieldTFed: 3.2, waterM3Fed: 3100 },
+    RIC: { yieldTFed: 4.2, waterM3Fed: 7200 }, CLV: { yieldTFed: 25, waterM3Fed: 3600 },
+    POT: { yieldTFed: 11, waterM3Fed: 3000 }, BET: { yieldTFed: 20, waterM3Fed: 3300 },
+    FBA: { yieldTFed: 1.2, waterM3Fed: 1900 }, SUN: { yieldTFed: 1.4, waterM3Fed: 2600 },
+    ORC: { yieldTFed: 8.5, waterM3Fed: 6500 }
   };
   try { var p = JSON.parse(localStorage.getItem(KEY_PREFS) || "{}"); if (p) { ["season","year","algorithm","secondUnit"].forEach(function (k) { if (p[k] != null) state[k] = p[k]; }); if (p.params) state.params = p.params; } } catch (e) { /* ignore */ }
   function savePrefs() {
@@ -358,7 +368,7 @@
   }
 
   // ---------------------------------------------------------------- the map
-  var map = null, aoiLayer = null, samplesLayer = null, overlayLayer = null, drawLayer = null;
+  var map = null, aoiLayer = null, samplesLayer = null, overlayLayer = null, drawLayer = null, sceneLayer = null, sceneActive = null;
   var basemaps = null, activeBasemap = "satellite";
   function initMap() {
     if (map) return;
@@ -374,10 +384,17 @@
     $$("#basemap-seg button").forEach(function (b) {
       b.addEventListener("click", function () {
         activeBasemap = b.getAttribute("data-basemap");
-        map.eachLayer(function (l) { if (l instanceof L.TileLayer) map.removeLayer(l); });
+        // remove only the base layers — the scene layer and the live EE overlay must survive
+        map.eachLayer(function (l) {
+          var isBase = Object.keys(basemaps).some(function (k) { return basemaps[k] === l; });
+          if (isBase) map.removeLayer(l);
+        });
         basemaps[activeBasemap].addTo(map);
         $$("#basemap-seg button").forEach(function (x) { x.classList.toggle("is-on", x === b); });
       });
+    });
+    $$("#scene-seg button").forEach(function (b) {
+      b.addEventListener("click", function () { setSceneLayer(b.getAttribute("data-scene")); });
     });
     $("#overlay-opacity").addEventListener("input", function () {
       if (overlayLayer) overlayLayer.setOpacity(parseFloat(this.value));
@@ -621,7 +638,11 @@
 
   function onMapClick(ev) {
     if (state.picking) { addSamplePoint(ev.latlng); return; }
-    if (!state.drawing) return;
+    if (!state.drawing) {
+      // live mode: clicking the map draws the NDVI time series at that point
+      if (isLive()) ndviPointPopup(ev.latlng);
+      return;
+    }
     var d = state.drawing;
     if (d.mode === "poly") {
       d.points.push([ev.latlng.lat, ev.latlng.lng]);
@@ -1004,12 +1025,15 @@
     return [parseInt(m[1].slice(0, 2), 16), parseInt(m[1].slice(2, 4), 16), parseInt(m[1].slice(4, 6), 16)];
   }
 
-  // ---------------------------------------------------------------- live backend (optional)
-  // When a real Earth Engine endpoint is deployed, point BACKEND_URL at it (a <script> before app.js
-  // setting window.DV_BACKEND_URL, or the URL query ?backend=https://…/api/run). The endpoint receives
-  // the engine's RunInput JSON (aoiGeo + algorithm + season + params + samplePoints) and must answer
-  // with a RunResult-shaped JSON: { mode:"live", tileUrl, oa, kappa, classes:[{classId, code, en, ar,
-  // color, areaKm2, percent}], dateFrom, dateTo, nImages, nTrain, nVal, sampleSource, durationMs }.
+  // ---------------------------------------------------------------- live backend (Earth Engine)
+  // Two ways to go live:
+  //  1. automatic — the server exposes /api/gee/* with a real GEE service-account key;
+  //     the app probes /api/gee/health at boot and switches every run to it.
+  //  2. explicit — a <script> setting window.DV_BACKEND_URL (or ?backend=https://…/api/run)
+  //     pointing at any RunResult-shaped endpoint.
+  // The endpoint receives the engine's RunInput JSON (aoiGeo + algorithm + season + params +
+  // samplePoints) and answers with a RunResult: { mode:"live", tileUrl, oa, kappa, classes:[…],
+  // confusion, dateFrom, dateTo, nImages, nTrain, nVal, sampleSource, durationMs, downloadUrl }.
   // Class areas then come from Earth Engine itself (areaKm2 per class), not from the local grid.
   function backendUrl() {
     // runtime override wins: window.DV_BACKEND_URL = "https://…/api/run" (also ?backend=… on load)
@@ -1020,51 +1044,109 @@
     } catch (e) { /* older browsers */ }
     return null;
   }
-  // settable at runtime (window.DV_BACKEND_URL = …) without reloading the page
-  function isLive() { return !!backendUrl(); }
-  function liveUrl() { return backendUrl(); }
+  function isLive() { return !!backendUrl() || state.gee.live; }
+  function liveUrl() { return backendUrl() || (state.gee.live ? state.gee.url : null); }
+
+  /** Ask the server whether a real Earth Engine key is configured. Never rejects. */
+  function geeProbe() {
+    if (!(S && S.geeHealth)) { state.gee.checked = true; renderGeeBadge(); return Promise.resolve(false); }
+    return S.geeHealth().then(function (h) {
+      state.gee.checked = true;
+      state.gee.live = h && h.mode === "live";
+      state.gee.url = S.apiBase() + "/api/gee/run";
+      renderGeeBadge();
+      return state.gee.live;
+    }, function () {
+      state.gee.checked = true; state.gee.live = false; renderGeeBadge();
+      return false;
+    });
+  }
+  function renderGeeBadge() {
+    var b = $("#gee-badge");
+    if (b) {
+      if (!state.gee.checked && !backendUrl()) { b.textContent = t("ws.gee.checking"); b.className = "chip"; }
+      else if (isLive()) { b.textContent = t("ws.gee.live"); b.className = "chip is-live"; }
+      else { b.textContent = t("ws.gee.preview"); b.className = "chip"; }
+    }
+    var lb = $("#league-btn"); if (lb) lb.hidden = !isLive();
+    var ss = $("#scene-seg"); if (ss) ss.hidden = !isLive();
+    applyModeBadge(); // the header's preview/live badge follows the same state
+  }
+
+  /** POST JSON with a long abort timeout (cold Earth Engine graphs run for minutes). */
+  function liveFetch(url, body, timeoutMs) {
+    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, timeoutMs || 330000) : null;
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: ctl ? ctl.signal : undefined
+    }).then(function (res) {
+      if (timer) clearTimeout(timer);
+      if (!res.ok) {
+        return res.text().then(function (tx) {
+          var code = "BACKEND_" + res.status;
+          try { var j = JSON.parse(tx); if (j && j.error) code = j.error; } catch (e) { /* keep HTTP code */ }
+          throw { code: code, message: String(tx).slice(0, 300) };
+        });
+      }
+      return res.json();
+    }, function (err) {
+      if (timer) clearTimeout(timer);
+      throw { code: "BACKEND", message: String(err && err.message || err) };
+    });
+  }
+
+  /** Engine RunResult → the shape this UI's renderer speaks. */
+  function normalizeLiveResult(jr, input) {
+    if (!jr || !jr.classes) throw { code: "BACKEND_BAD" };
+    var classes = jr.classes.map(function (c) {
+      var cls = I.classById(c.classId);
+      return {
+        classId: c.classId, code: c.code != null ? c.code : (cls ? cls.code : null),
+        en: c.en != null ? c.en : (cls ? cls.en : ""), ar: c.ar != null ? c.ar : (cls ? cls.ar : ""),
+        color: c.color || (cls ? cls.color : "#cccccc"),
+        name: c.name != null ? c.name : (state.lang === "ar" ? (c.ar || (cls ? cls.ar : "")) : (c.en || (cls ? cls.en : ""))),
+        share: c.percent != null ? c.percent / 100 : (c.areaKm2 != null && jr.areaKm2 ? c.areaKm2 / jr.areaKm2 : 0),
+        percent: c.percent != null ? c.percent : (c.areaKm2 != null && jr.areaKm2 ? c.areaKm2 / jr.areaKm2 * 100 : 0),
+        areaM2: c.areaKm2 != null ? c.areaKm2 * 1e6 : (c.areaFeddan != null ? c.areaFeddan * 4200 : 0),
+        pa: typeof c.pa === "number" ? c.pa : null,
+        ua: typeof c.ua === "number" ? c.ua : null,
+        f1: typeof c.f1 === "number" ? c.f1 : null,
+        support: c.support || 0
+      };
+    });
+    var algo = (input && input.algorithm) || jr.algorithm;
+    return {
+      mode: "live",
+      algorithm: algo, algorithmName: t("algo.names." + algo),
+      season: (input && input.season) || jr.season,
+      dateFrom: jr.dateFrom || (input && input.dateFrom), dateTo: jr.dateTo || (input && input.dateTo),
+      tileUrl: jr.tileUrl || null,
+      previewImage: null, grid: null,
+      oa: typeof jr.oa === "number" ? jr.oa : null,
+      kappa: typeof jr.kappa === "number" ? jr.kappa : null,
+      classes: classes,
+      confusion: jr.confusion || null,
+      nImages: jr.nImages != null ? jr.nImages : null,
+      nTrain: jr.nTrain != null ? jr.nTrain : null,
+      nVal: jr.nVal != null ? jr.nVal : null,
+      sampleSource: jr.sampleSource || null,
+      sampleClassCounts: jr.sampleClassCounts || null,
+      durationMs: jr.durationMs || null,
+      noteCodes: (jr.noteCodes || (jr.noteCode ? [jr.noteCode] : [])).slice(),
+      downloadUrl: jr.downloadUrl || null,
+      areaKm2: jr.areaKm2 != null ? jr.areaKm2 : G.m2ToKm2(state.aoi ? state.aoi.areaM2 : 0)
+    };
+  }
 
   function runLive(input) {
     var body = JSON.parse(JSON.stringify(input)); // drop marker functions, if any
-    return fetch(liveUrl(), {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    }).then(function (res) {
-      if (!res.ok) return res.text().then(function (tx) { throw { code: "BACKEND_" + res.status, message: tx.slice(0, 300) }; });
-      return res.json();
-    }).then(function (jr) {
-      if (!jr || !jr.classes || !jr.tileUrl) throw { code: "BACKEND_BAD" };
-      // normalise into the same shape the renderer speaks
-      var classes = jr.classes.map(function (c) {
-        var cls = I.classById(c.classId);
-        return {
-          classId: c.classId, code: c.code != null ? c.code : (cls ? cls.code : null),
-          en: c.en != null ? c.en : (cls ? cls.en : ""), ar: c.ar != null ? c.ar : (cls ? cls.ar : ""),
-          color: c.color || (cls ? cls.color : "#cccccc"),
-          name: c.name != null ? c.name : (state.lang === "ar" ? (c.ar || (cls ? cls.ar : "")) : (c.en || (cls ? cls.en : ""))),
-          share: c.percent != null ? c.percent / 100 : (c.areaKm2 != null && jr.areaKm2 ? c.areaKm2 / jr.areaKm2 : 0),
-          percent: c.percent != null ? c.percent : (c.areaKm2 != null && jr.areaKm2 ? c.areaKm2 / jr.areaKm2 * 100 : 0),
-          areaM2: c.areaKm2 != null ? c.areaKm2 * 1e6 : (c.areaFeddan != null ? c.areaFeddan * 4200 : 0)
-        };
-      });
-      return {
-        mode: "live",
-        algorithm: input.algorithm, algorithmName: t("algo.names." + input.algorithm),
-        season: input.season, dateFrom: jr.dateFrom || input.dateFrom, dateTo: jr.dateTo || input.dateTo,
-        tileUrl: jr.tileUrl,
-        previewImage: null, grid: null,
-        oa: typeof jr.oa === "number" ? jr.oa : null,
-        kappa: typeof jr.kappa === "number" ? jr.kappa : null,
-        classes: classes,
-        nImages: jr.nImages != null ? jr.nImages : null,
-        nTrain: jr.nTrain != null ? jr.nTrain : null,
-        nVal: jr.nVal != null ? jr.nVal : null,
-        sampleSource: jr.sampleSource || null,
-        durationMs: jr.durationMs || null,
-        noteCodes: (jr.noteCodes || []).slice(),
-        areaKm2: jr.areaKm2 != null ? jr.areaKm2 : G.m2ToKm2(state.aoi.areaM2)
-      };
+    return liveFetch(liveUrl(), body, 330000).then(function (jr) {
+      var res = normalizeLiveResult(jr, input);
+      if (!res.tileUrl) throw { code: "BACKEND_BAD" };
+      return res;
     });
   }
 
@@ -1136,6 +1218,162 @@
     overlayLayer.setZIndex && overlayLayer.setZIndex(400);
   }
 
+  // ---------------------------------------------------------------- live scene layers (Sentinel-2)
+  /** Toggle a true-colour / NDVI / NDWI scene layer under the classification overlay. */
+  function setSceneLayer(layer) {
+    if (!isLive() || !map) return;
+    if (sceneActive === layer) { // click again → remove
+      if (sceneLayer) { map.removeLayer(sceneLayer); sceneLayer = null; }
+      sceneActive = null;
+      $$("#scene-seg button").forEach(function (b) { b.classList.remove("is-on"); });
+      return;
+    }
+    sceneActive = layer;
+    $$("#scene-seg button").forEach(function (b) { b.classList.toggle("is-on", b.getAttribute("data-scene") === layer); });
+    var per = I.period(state.season, state.year);
+    liveFetch((backendUrl() ? backendUrl().replace(/\/api\/gee\/run$/, "") : S.apiBase()) + "/api/gee/scene", {
+      layer: layer, season: state.season, year: state.year,
+      dateFrom: per.dateFrom, dateTo: per.dateTo,
+      cloudMax: state.params.cloudMax != null ? state.params.cloudMax : I.PARAMS.cloudMax.def
+    }, 130000).then(function (j) {
+      if (!j || !j.tileUrl) throw { code: "scene_failed" };
+      if (sceneLayer) map.removeLayer(sceneLayer);
+      sceneLayer = L.tileLayer(j.tileUrl, { opacity: 0.9, maxNativeZoom: 17, zIndex: 300 });
+      sceneLayer.addTo(map);
+    }, function (err) {
+      sceneActive = null;
+      $$("#scene-seg button").forEach(function (b) { b.classList.remove("is-on"); });
+      toast(errorText(err), true);
+    });
+  }
+
+  /** NDVI time-series popup at a clicked point (live mode). */
+  function ndviPointPopup(latlng) {
+    if (!map) return;
+    var per = I.period(state.season, state.year);
+    var pop = L.popup({ className: "ndvi-pop", maxWidth: 320 })
+      .setLatLng(latlng)
+      .setContent('<h4>' + esc(t("ws.ndvi.loading")) + '</h4>')
+      .openOn(map);
+    var base = backendUrl() ? backendUrl().replace(/\/api\/gee\/run$/, "") : (S ? S.apiBase() : "");
+    liveFetch(base + "/api/gee/ndvi-point", {
+      lon: +latlng.lng.toFixed(6), lat: +latlng.lat.toFixed(6),
+      season: state.season, year: state.year,
+      dateFrom: per.dateFrom, dateTo: per.dateTo,
+      cloudMax: state.params.cloudMax != null ? state.params.cloudMax : I.PARAMS.cloudMax.def
+    }, 130000).then(function (j) {
+      var series = (j && j.series) || [];
+      if (!series.length) {
+        pop.setContent('<h4>' + esc(t("ws.ndvi.title")) + '</h4><p>' + esc(t("ws.ndvi.empty")) + '</p>');
+        return;
+      }
+      pop.setContent('<h4>' + esc(t("ws.ndvi.title")) + '</h4>' + ndviChartSvg(series));
+    }, function () {
+      pop.setContent('<h4>' + esc(t("ws.ndvi.title")) + '</h4><p>' + esc(t("errors.ndvi_failed")) + '</p>');
+    });
+  }
+
+  /** Small inline SVG line chart of the NDVI series. */
+  function ndviChartSvg(series) {
+    var w = 280, h = 120, padL = 30, padB = 16, padT = 8;
+    var n = series.length;
+    var xs = series.map(function (p, i) { return padL + (n > 1 ? (w - padL - 6) * i / (n - 1) : 0); });
+    var ys = series.map(function (p) {
+      var v = Math.max(-0.5, Math.min(1, p.v == null ? 0 : p.v));
+      return padT + (1 - (v + 0.5) / 1.5) * (h - padT - padB);
+    });
+    var path = xs.map(function (x, i) { return (i ? "L" : "M") + x.toFixed(1) + "," + ys[i].toFixed(1); }).join("");
+    var dots = xs.map(function (x, i) {
+      return '<circle cx="' + x.toFixed(1) + '" cy="' + ys[i].toFixed(1) + '" r="2.6" fill="#3e8f29"><title>'
+        + esc(series[i].d + " · " + (series[i].v == null ? "—" : series[i].v.toFixed(2))) + '</title></circle>';
+    }).join("");
+    return '<svg viewBox="0 0 ' + w + ' ' + h + '" style="width:100%;height:auto" role="img">'
+      + '<line x1="' + padL + '" y1="0" x2="' + padL + '" y2="' + (h - padB) + '" stroke="#ccc"/>'
+      + '<text x="2" y="' + (padT + 4) + '" font-size="9" fill="#666">1.0</text>'
+      + '<text x="2" y="' + (h - padB) + '" font-size="9" fill="#666">-0.5</text>'
+      + '<line x1="' + padL + '" y1="' + (h - padB) + '" x2="' + (w - 4) + '" y2="' + (h - padB) + '" stroke="#ccc"/>'
+      + '<path d="' + path + '" fill="none" stroke="#3e8f29" stroke-width="2"/>' + dots
+      + '<text x="' + padL + '" y="' + (h - 4) + '" font-size="9" fill="#666">' + esc(series[0].d) + '</text>'
+      + '<text x="' + (w - 4) + '" y="' + (h - 4) + '" font-size="9" fill="#666" text-anchor="end">' + esc(series[n - 1].d) + '</text>'
+      + '</svg>';
+  }
+
+  // ---------------------------------------------------------------- accuracy league (live compare-all)
+  function initLeague() {
+    var dlg = $("#league-dialog");
+    if (!dlg || !dlg.showModal) { var lb0 = $("#league-btn"); if (lb0) lb0.hidden = true; return; }
+    $("#league-btn").addEventListener("click", function () {
+      if (!state.aoi) { toast(t("ws.needAoi"), true); return; }
+      runLeague();
+    });
+    $("#league-close").addEventListener("click", function () { dlg.close(); });
+  }
+
+  function leaguePayload() {
+    var algo = I.algorithmByKey(state.algorithm);
+    return {
+      kind: "compare",
+      season: state.season,
+      year: state.year,
+      cloudMax: state.params.cloudMax,
+      params: pickParams(algo),
+      samplePoints: state.samples.map(function (s) { return { classId: s.classId, lon: s.lon, lat: s.lat }; }),
+      aoiGeo: state.aoi.fc,
+      aoiName: state.aoi.name
+    };
+  }
+
+  function runLeague() {
+    var dlg = $("#league-dialog"), status = $("#league-status"), tbl = $("#league-table"), bestBtn = $("#league-best-btn");
+    if (!isLive()) { toast(t("errors.gee_not_configured"), true); return; }
+    status.textContent = t("ws.league.running");
+    bestBtn.hidden = true;
+    tbl.innerHTML = "";
+    dlg.showModal();
+    var input = leaguePayload();
+    liveFetch(liveUrl(), input, 330000).then(function (j) {
+      if (!j || !Array.isArray(j.summary) || !j.best) throw { code: "BACKEND_BAD" };
+      status.textContent = "";
+      var thead = el("thead"), trh = el("tr");
+      [t("ws.league.cols.algo"), t("ws.league.cols.oa"), t("ws.league.cols.kappa")].forEach(function (h) { trh.appendChild(el("th", null, h)); });
+      thead.appendChild(trh); tbl.appendChild(thead);
+      var tbody = el("tbody");
+      var bestIdx = 0;
+      j.summary.forEach(function (row, i) {
+        // the engine returns the summary sorted by OA (desc) — the winner is the first scored row
+        if (row.oa != null && j.summary[bestIdx].oa == null) bestIdx = i;
+        var tr = el("tr");
+        var td0 = el("td", "wrap", t("algo.names." + row.algorithm));
+        if (row.oa != null) {
+          var tag = el("span", "chip", " " + t("ws.league.winner") + " ");
+          tag.style.fontSize = ".68rem";
+          if (i === bestIdx) td0.appendChild(tag);
+        }
+        tr.appendChild(td0);
+        td(tr, row.oa != null ? fmt(row.oa * 100, 1) + "%" : t("ws.league.failed"), "num");
+        td(tr, row.kappa != null ? fmt(row.kappa, 3) : "—", "num");
+        tbody.appendChild(tr);
+      });
+      tbl.appendChild(tbody);
+      bestBtn.hidden = false;
+      bestBtn.onclick = function () {
+        dlg.close();
+        try {
+          var res = normalizeLiveResult(j.best, { algorithm: j.best.algorithm, season: input.season, year: input.year });
+          if (!res.tileUrl) throw { code: "BACKEND_BAD" };
+          state.results = res;
+          state.resultsParams = { params: pickParams(I.algorithmByKey(j.best.algorithm)), cloudMax: state.params.cloudMax };
+          state.algorithm = j.best.algorithm; savePrefs();
+          showOverlay(); renderResults(); renderLegend();
+          saveRunSnapshot({ kind: "run", algorithm: j.best.algorithm, season: input.season, year: input.year, cloudMax: input.cloudMax, params: input.params, samplePoints: input.samplePoints, aoiGeo: input.aoiGeo, aoiName: input.aoiName }, res);
+        } catch (err) { toast(errorText(err), true); }
+      };
+    }, function (err) {
+      status.textContent = errorText(err);
+      toast(errorText(err), true);
+    });
+  }
+
   function renderResults() {
     var body = $("#results-body"), empty = $("#results-empty");
     if (!state.results) { body.hidden = true; empty.hidden = false; renderLegend(); return; }
@@ -1165,7 +1403,8 @@
     }
     row.appendChild(acard);
 
-    // class table
+    // class table (live supervised runs add PA / UA / F1 columns)
+    var liveAcc = r.mode === "live" && r.classes.some(function (c) { return c.pa != null; });
     var table = $("#class-table");
     table.innerHTML = "";
     var thead = el("thead");
@@ -1175,6 +1414,12 @@
     var th3 = el("th", null, secondUnitLabel()); th3.className = "num";
     var th4 = el("th", null, t("ws.results.percent")); th4.className = "num";
     trh.appendChild(th1); trh.appendChild(th2); trh.appendChild(th3); trh.appendChild(th4);
+    if (liveAcc) {
+      var th5 = el("th", null, t("ws.results.pa")); th5.className = "num";
+      var th6 = el("th", null, t("ws.results.ua")); th6.className = "num";
+      var th7 = el("th", null, t("ws.results.f1")); th7.className = "num";
+      trh.appendChild(th5); trh.appendChild(th6); trh.appendChild(th7);
+    }
     thead.appendChild(trh); table.appendChild(thead);
     var tbody = el("tbody");
     r.classes.forEach(function (c) {
@@ -1189,6 +1434,11 @@
       td(tr, secondUnitValue(c.areaM2), "num");
       var tdp = td(tr, fmt(c.percent, 1) + "%", "num");
       tdp.appendChild(barEl(c.percent));
+      if (liveAcc) {
+        td(tr, c.pa != null ? fmt(c.pa * 100, 1) + "%" : "—", "num");
+        td(tr, c.ua != null ? fmt(c.ua * 100, 1) + "%" : "—", "num");
+        td(tr, c.f1 != null ? fmt(c.f1, 3) : "—", "num");
+      }
       tbody.appendChild(tr);
     });
     var tfoot = el("tfoot");
@@ -1199,6 +1449,11 @@
     td(trf, "100%", "num");
     tfoot.appendChild(trf);
     table.appendChild(tbody); table.appendChild(tfoot);
+
+    // live-run extras: confusion matrix, yield & water DSS, notes, GeoTIFF link
+    renderConfusion(r);
+    renderDss(r);
+    renderRunExtras(r);
 
     // parcels table
     var pt = $("#parcels-table");
@@ -1238,6 +1493,99 @@
     }
     updateReportHead();
   }
+  /** Confusion matrix (live supervised runs): rows = reference, cols = prediction. */
+  function renderConfusion(r) {
+    var wrap = $("#confusion-wrap"), tbl = $("#confusion-table");
+    if (!wrap || !tbl) return;
+    var cm = r.confusion;
+    if (!(r.mode === "live" && cm && cm.classIds && cm.classIds.length > 1)) { wrap.hidden = true; tbl.innerHTML = ""; return; }
+    wrap.hidden = false;
+    tbl.innerHTML = "";
+    var names = cm.classIds.map(function (id) { var c = I.classById(id); return c ? (state.lang === "ar" ? c.ar : c.en) + " (" + c.code + ")" : String(id); });
+    var thead = el("thead"), trh = el("tr");
+    trh.appendChild(el("th", "rowhead", "↓"));
+    names.forEach(function (n) { trh.appendChild(el("th", null, n)); });
+    thead.appendChild(trh); tbl.appendChild(thead);
+    var tbody = el("tbody");
+    cm.rows.forEach(function (row, i) {
+      var tr = el("tr");
+      tr.appendChild(el("th", "rowhead", names[i]));
+      row.forEach(function (v, j) {
+        var d = el("td", i === j ? "diag" : "", String(v));
+        tr.appendChild(d);
+      });
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+  }
+
+  /** Yield & water decision support: Egyptian indicative figures per feddan. */
+  function renderDss(r) {
+    var wrap = $("#dss-wrap"), tbl = $("#dss-table"), totals = $("#dss-totals");
+    if (!wrap || !tbl || !totals) return;
+    var rows = (r.classes || []).filter(function (c) {
+      return c.code && CROP_DSS[c.code] && c.areaM2 > 0;
+    });
+    if (r.algorithm === "kmeans" || !rows.length) { wrap.hidden = true; tbl.innerHTML = ""; totals.innerHTML = ""; return; }
+    wrap.hidden = false;
+    var sumYield = 0, sumWater = 0;
+    tbl.innerHTML = "";
+    var thead = el("thead"), trh = el("tr");
+    var th1 = el("th", null, t("ws.results.dssCrop")); th1.className = "wrap";
+    var th2 = el("th", null, t("units.feddan")); th2.className = "num";
+    var th3 = el("th", null, t("ws.results.dssYield")); th3.className = "num";
+    var th4 = el("th", null, t("ws.results.dssWater")); th4.className = "num";
+    trh.appendChild(th1); trh.appendChild(th2); trh.appendChild(th3); trh.appendChild(th4);
+    thead.appendChild(trh); tbl.appendChild(thead);
+    var tbody = el("tbody");
+    rows.forEach(function (c) {
+      var fed = G.m2ToFeddan(c.areaM2);
+      var y = fed * CROP_DSS[c.code].yieldTFed;
+      var w = fed * CROP_DSS[c.code].waterM3Fed;
+      sumYield += y; sumWater += w;
+      var tr = el("tr");
+      var td0 = el("td", "wrap");
+      var cell = el("span", "cell-class");
+      cell.appendChild(el("span", "swatch"));
+      cell.lastChild.style.background = c.color;
+      cell.appendChild(el("span", null, c.name));
+      td0.appendChild(cell); tr.appendChild(td0);
+      td(tr, fmt(fed), "num");
+      td(tr, fmt(y, 1), "num");
+      td(tr, fmt(w, 0), "num");
+      tbody.appendChild(tr);
+    });
+    tbl.appendChild(tbody);
+    totals.innerHTML = "";
+    statCard(totals, fmt(sumYield, 0) + " ", t("ws.results.dssTotalYield"), t("units.ton"));
+    statCard(totals, fmt(sumWater, 0) + " ", t("ws.results.dssTotalWater"), "m³");
+  }
+
+  /** Notes strip + GeoTIFF download for the current run. */
+  function renderRunExtras(r) {
+    var run = $("#results-run");
+    var actions = document.querySelector(".results-actions");
+    var old = document.getElementById("run-notes"); if (old) old.remove();
+    var oldDl = document.getElementById("geotiff-btn"); if (oldDl) oldDl.remove();
+    if (run && r.noteCodes && r.noteCodes.length) {
+      var texts = r.noteCodes.map(function (code) { return t("notes." + code); })
+        .filter(function (s) { return s && s.indexOf("notes.") !== 0; });
+      if (texts.length) {
+        var p = el("p", "hint", texts.join(" · "));
+        p.id = "run-notes";
+        run.parentNode.insertBefore(p, run.nextSibling);
+      }
+    }
+    if (actions && r.downloadUrl) {
+      var a = el("a", "btn btn-ghost btn-sm", t("ws.results.download"));
+      a.id = "geotiff-btn";
+      a.href = r.downloadUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      actions.appendChild(a);
+    }
+  }
+
   function td(tr, text, cls) { var d = el("td", cls || "", text == null ? "—" : String(text)); tr.appendChild(d); return d; }
   function statCard(row, big, label, unit) {
     var c = el("div", "stat-card");
@@ -1819,12 +2167,15 @@
     initSamples();
     initCompare();
     initHistory();
+    initLeague();
     updateHistoryButton();
     initUploadPage();
     initTabs();
     renderAlgorithmPage();
     renderGuidePage();
     renderWorkspaceChrome();
+    renderGeeBadge();
+    geeProbe();
     // workspace buttons
     $("#sample-aoi-btn").addEventListener("click", loadSampleAoi);
     $("#draw-poly").addEventListener("click", function () { startDrawing("poly"); });

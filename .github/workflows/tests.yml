@@ -30,15 +30,22 @@ jobs:
         run: node test/auth.test.js src/auth.js
       - name: i18n suite (87 checks)
         run: node test/i18n.test.js src/i18n.js src/data.js
-      - name: install pg + playwright
+      - name: install deps + playwright
         run: |
           # playwright must be a real dependency so the tests can require() it;
-          # then its own CLI downloads the matching chromium
-          npm install --no-audit --no-fund pg playwright@1.57.0
+          # then its own CLI downloads the matching chromium. esbuild +
+          # @google/earthengine compile the GEE engine bundle the api/ layer needs.
+          npm install --no-audit --no-fund
           npx playwright install --with-deps chromium
+      - name: build GEE engine bundle (api/_gee_engine.js)
+        run: bash scripts/build_gee.sh
       - name: live-backend E2E (12 checks)
         run: node test/live.test.js public/index.html test/fixtures test/fixtures/bourj
       - name: server-auth E2E (15 checks)
         run: node test/server_auth.test.js public/index.html test/fixtures
+      - name: GEE unit + live-mode E2E (59 checks)
+        run: |
+          node test/gee_unit.test.js
+          node test/live_gee.test.js public/index.html
       - name: preview E2E (54 checks)
         run: node test/e2e.js public/index.html test/fixtures test/fixtures/bourj shots

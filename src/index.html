@@ -387,9 +387,11 @@
         </section>
 
         <div class="ws-actions">
+          <span class="chip" id="gee-badge" aria-live="polite"></span>
           <button class="btn btn-lime btn-lg" id="run-btn" data-i18n="ws.run"></button>
           <button class="btn btn-ghost" id="history-btn" data-i18n="ws.historyBtn" hidden></button>
           <button class="btn btn-ghost" id="compare-btn" data-i18n="ws.compareBtn"></button>
+          <button class="btn btn-ghost" id="league-btn" data-i18n="ws.leagueBtn" hidden></button>
         </div>
       </div>
 
@@ -400,6 +402,11 @@
             <span class="seg" id="basemap-seg">
               <button class="is-on" data-basemap="satellite" data-i18n="ws.map.satellite"></button>
               <button data-basemap="streets" data-i18n="ws.map.streets"></button>
+            </span>
+            <span class="seg" id="scene-seg" hidden>
+              <button data-scene="truecolor" data-i18n="ws.map.scene.truecolor"></button>
+              <button data-scene="ndvi" data-i18n="ws.map.scene.ndvi"></button>
+              <button data-scene="ndwi" data-i18n="ws.map.scene.ndwi"></button>
             </span>
             <label class="opacity">
               <span data-i18n="ws.map.opacity"></span>
@@ -438,6 +445,17 @@
             <div class="stack">
               <h3 class="sub-title" data-i18n="ws.results.tableTitle"></h3>
               <div class="table-wrap"><table class="dv-table" id="class-table"></table></div>
+              <div class="stack" id="confusion-wrap" hidden>
+                <h3 class="sub-title" data-i18n="ws.results.confusionTitle"></h3>
+                <div class="table-wrap"><table class="dv-table matrix" id="confusion-table"></table></div>
+                <p class="hint" data-i18n="ws.results.confusionHint"></p>
+              </div>
+              <div class="stack" id="dss-wrap" hidden>
+                <h3 class="sub-title" data-i18n="ws.results.dssTitle"></h3>
+                <p class="hint" data-i18n="ws.results.dssHint"></p>
+                <div class="stat-row" id="dss-totals"></div>
+                <div class="table-wrap"><table class="dv-table" id="dss-table"></table></div>
+              </div>
               <h3 class="sub-title"><span data-i18n="ws.results.parcelsTitle"></span></h3>
               <div class="table-wrap"><table class="dv-table" id="parcels-table"></table></div>
               <div class="stack">
@@ -605,6 +623,23 @@
     </div>
     <p class="hint" data-i18n="ws.compare.text"></p>
     <div class="table-wrap"><table class="dv-table compare-table" id="compare-table"></table></div>
+  </div>
+</dialog>
+<dialog class="dialog" id="league-dialog">
+  <div class="dialog-inner">
+    <div class="dialog-head">
+      <h2 data-i18n="ws.league.title"></h2>
+      <button class="round-btn round-ghost" id="league-close">
+        <span class="sr-only" data-i18n="ws.compare.close"></span>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </button>
+    </div>
+    <p class="hint" data-i18n="ws.league.hint"></p>
+    <p class="hint" id="league-status"></p>
+    <div class="table-wrap"><table class="dv-table" id="league-table"></table></div>
+    <div class="dialog-actions">
+      <button class="btn btn-lime" id="league-best-btn" data-i18n="ws.league.loadBest" hidden></button>
+    </div>
   </div>
 </dialog>
 
