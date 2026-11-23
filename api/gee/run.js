@@ -12,7 +12,7 @@
  * { error: "gee_not_configured" } and the frontend stays in preview mode. */
 "use strict";
 const { json, readBody } = require("../_db");
-const E = require("../_gee_engine");
+const E = require("../../engine/_gee_engine");
 
 function num(v, def) {
   const n = Number(v);

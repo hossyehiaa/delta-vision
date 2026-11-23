@@ -3,7 +3,7 @@
  * there is no background function, so jobs is always "sync" in live mode. */
 "use strict";
 const { json } = require("../_db");
-const E = require("../_gee_engine");
+const E = require("../../engine/_gee_engine");
 
 module.exports = async function (req, res) {
   if (!E.isGEEConfigured()) return json(res, { ok: false, mode: "demo", jobs: "sync" });

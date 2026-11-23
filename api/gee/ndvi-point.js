@@ -2,7 +2,7 @@
  * { lon, lat, season, year?, dateFrom?, dateTo?, cloudMax? } → { series: [{ d, v }] }. */
 "use strict";
 const { json, readBody } = require("../_db");
-const E = require("../_gee_engine");
+const E = require("../../engine/_gee_engine");
 
 module.exports = async function (req, res) {
   if (req.method !== "POST") return json(res, { error: "METHOD" }, 405);

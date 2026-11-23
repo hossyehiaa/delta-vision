@@ -10,7 +10,7 @@
 const assert = require("assert");
 const path = require("path");
 
-const E = require(path.resolve("api/_gee_engine.js"));
+const E = require(path.resolve("engine/_gee_engine.js"));
 const geeHealth = require(path.resolve("api/gee/health.js"));
 const geeRun = require(path.resolve("api/gee/run.js"));
 const geeScene = require(path.resolve("api/gee/scene.js"));
