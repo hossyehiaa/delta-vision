@@ -89,9 +89,18 @@ function parseToken(raw) {
 }
 
 // ---------------------------------------------------------------- helpers
-function json(body, status) {
-  return { statusCode: status || 200, headers: { "Content-Type": "application/json; charset=utf-8" }, body: JSON.stringify(body) };
+function send(res, body, status) {
+  const payload = JSON.stringify(body);
+  const code = status || 200;
+  // Vercel Node functions write through res; the returned object is for tests/tools
+  if (res && typeof res.end === "function") {
+    res.statusCode = code;
+    if (res.setHeader) res.setHeader("Content-Type", "application/json; charset=utf-8");
+    res.end(payload);
+  }
+  return { statusCode: code, headers: { "Content-Type": "application/json; charset=utf-8" }, body: payload };
 }
+const json = (res, body, status) => send(res, body, status);
 function readBody(req) {
   // Vercel puts the parsed JSON body in req.body already
   if (req.body && typeof req.body === "object") return req.body;
@@ -119,5 +128,5 @@ function authUser(req) {
 
 module.exports = {
   getPool, initSchema, hashPassword, verifyPassword, newToken, parseToken,
-  json, readBody, validateSignup, publicUser, authUser, EMAIL_RE
+  json: send, readBody, validateSignup, publicUser, authUser, EMAIL_RE
 };

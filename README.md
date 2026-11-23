@@ -4,6 +4,8 @@ Crop classification of the Nile Delta with **Sentinel-2 + Google Earth Engine** 
 static web app, **Arabic-first (RTL) with English toggle**, and every area reported in
 **فدان (feddan)**.
 
+**Live**: <https://delta-vision-reelzatak.vercel.app> (Vercel + Neon Postgres)
+
 Open `public/index.html` (or the deployed URL) and you get the whole app: landing page, sign-up /
 login, shapefile upload, drawing tools, the classification workspace, results in feddan, CSV export
 and a printable report. No server required — Leaflet, proj4js, the fonts and the images are all
@@ -134,6 +136,8 @@ live path (input shape, OA/Kappa display, feddan from `areaKm2`, failure toast).
 The app is one static file — any static host works.
 
 **Vercel**: push this repo to GitHub, then "Import Project" at vercel.com (or `npx vercel`).
+The current production deployment was made through the v13 API (see `scripts/ver_deploy.py` workflow):
+serverless functions are esbuild bundles with `pg` inlined (`scripts/bundle_api.sh`).
 `vercel.json` already sets the build command (`python3 build.py`) and output (`public/`).
 Vercel's Python runtime is available by default; if you build locally, commit `public/` and use
 outputDirectory `public` with no build command.

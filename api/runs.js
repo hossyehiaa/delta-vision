@@ -22,7 +22,7 @@ function guardRun(b) {
 module.exports = async function (req, res) {
   try {
     const uid = authUser(req);
-    if (!uid) return json({ ok: false, error: "AUTH" }, 401);
+    if (!uid) return json(res, { ok: false, error: "AUTH" }, 401);
     const db = getPool();
     await initSchema();
 
@@ -31,12 +31,12 @@ module.exports = async function (req, res) {
         "SELECT id, algorithm, season, year, mode, aoi_name, created_at FROM runs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 50",
         [uid]
       );
-      return json({ ok: true, runs: r.rows.map(row) });
+      return json(res, { ok: true, runs: r.rows.map(row) });
     }
 
     const b = readBody(req);
     const bad = guardRun(b);
-    if (bad) return json({ ok: false, error: bad }, 400);
+    if (bad) return json(res, { ok: false, error: bad }, 400);
 
     const id = crypto.randomBytes(8).toString("hex");
     await db.query(
@@ -47,9 +47,9 @@ module.exports = async function (req, res) {
        b.samplePoints ? JSON.stringify(b.samplePoints) : null,
        b.params ? JSON.stringify(b.params) : null, JSON.stringify(b.results)]
     );
-    return json({ ok: true, id: id }, 201);
+    return json(res, { ok: true, id: id }, 201);
   } catch (e) {
-    return json({ ok: false, error: "SERVER" }, 500);
+    return json(res, { ok: false, error: "SERVER" }, 500);
   }
 };
 

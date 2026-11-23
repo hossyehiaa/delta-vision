@@ -5,23 +5,23 @@ const { getPool, initSchema, json, authUser } = require("../_db");
 module.exports = async function (req, res) {
   try {
     const uid = authUser(req);
-    if (!uid) return json({ ok: false, error: "AUTH" }, 401);
+    if (!uid) return json(res, { ok: false, error: "AUTH" }, 401);
     const id = String((req.query && req.query.id) || "").replace(/[^a-f0-9]/gi, "");
-    if (!id || id.length < 8) return json({ ok: false, error: "NOT_FOUND" }, 404);
+    if (!id || id.length < 8) return json(res, { ok: false, error: "NOT_FOUND" }, 404);
 
     const db = getPool();
     await initSchema();
 
     if (req.method === "DELETE") {
       const r = await db.query("DELETE FROM runs WHERE id = $1 AND user_id = $2 RETURNING id", [id, uid]);
-      if (!r.rowCount) return json({ ok: false, error: "NOT_FOUND" }, 404);
-      return json({ ok: true });
+      if (!r.rowCount) return json(res, { ok: false, error: "NOT_FOUND" }, 404);
+      return json(res, { ok: true });
     }
 
     const r = await db.query("SELECT * FROM runs WHERE id = $1 AND user_id = $2", [id, uid]);
     const row = r.rows[0];
-    if (!row) return json({ ok: false, error: "NOT_FOUND" }, 404);
-    return json({
+    if (!row) return json(res, { ok: false, error: "NOT_FOUND" }, 404);
+    return json(res, {
       ok: true,
       run: {
         id: row.id, algorithm: row.algorithm, season: row.season, year: row.year, mode: row.mode,
@@ -30,6 +30,6 @@ module.exports = async function (req, res) {
       }
     });
   } catch (e) {
-    return json({ ok: false, error: "SERVER" }, 500);
+    return json(res, { ok: false, error: "SERVER" }, 500);
   }
 };

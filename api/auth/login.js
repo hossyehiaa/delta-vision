@@ -9,20 +9,20 @@ module.exports = async function (req, res) {
     const b = readBody(req);
     const email = String(b.email || "").trim().toLowerCase();
     const password = String(b.password || "");
-    if (!email || !password) return json({ ok: false, error: "BAD_CREDENTIALS" }, 401);
+    if (!email || !password) return json(res, { ok: false, error: "BAD_CREDENTIALS" }, 401);
 
     const r = await db.query("SELECT * FROM users WHERE email = $1", [email]);
     const u = r.rows[0];
-    if (!u) return json({ ok: false, error: "BAD_CREDENTIALS" }, 401);
+    if (!u) return json(res, { ok: false, error: "BAD_CREDENTIALS" }, 401);
 
     const crypto = require("crypto");
     const got = crypto.scryptSync(password, u.pw_salt, 64).toString("hex");
     const a = Buffer.from(got), b2 = Buffer.from(u.pw_hash);
     const ok = a.length === b2.length && crypto.timingSafeEqual(a, b2);
-    if (!ok) return json({ ok: false, error: "BAD_CREDENTIALS" }, 401);
+    if (!ok) return json(res, { ok: false, error: "BAD_CREDENTIALS" }, 401);
 
-    return json({ ok: true, user: publicUser(u), token: newToken(u.id) });
+    return json(res, { ok: true, user: publicUser(u), token: newToken(u.id) });
   } catch (e) {
-    return json({ ok: false, error: "SERVER" }, 500);
+    return json(res, { ok: false, error: "SERVER" }, 500);
   }
 };

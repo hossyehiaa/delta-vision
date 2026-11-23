@@ -26,9 +26,9 @@ module.exports = async function (req, res) {
       const r = await db.query("SELECT * FROM users WHERE email = $1", [DEMO.email]);
       u = r.rows[0];
     }
-    if (!u) return json({ ok: false, error: "SERVER" }, 500);
-    return json({ ok: true, user: publicUser(u), token: newToken(u.id) });
+    if (!u) return json(res, { ok: false, error: "SERVER" }, 500);
+    return json(res, { ok: true, user: publicUser(u), token: newToken(u.id) });
   } catch (e) {
-    return json({ ok: false, error: "SERVER" }, 500);
+    return json(res, { ok: false, error: "SERVER" }, 500);
   }
 };

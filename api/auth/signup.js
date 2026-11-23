@@ -25,17 +25,17 @@ module.exports = async function (req, res) {
     await initSchema();
     const b = readBody(req);
     const v = validateSignup(b);
-    if (!v.ok) return json({ ok: false, error: "INVALID", errors: v.errors }, 400);
+    if (!v.ok) return json(res, { ok: false, error: "INVALID", errors: v.errors }, 400);
 
     const exists = await db.query("SELECT 1 FROM users WHERE email = $1", [v.email]);
-    if (exists.rowCount) return json({ ok: false, error: "EMAIL_TAKEN", errors: { email: "EMAIL_TAKEN" } }, 409);
+    if (exists.rowCount) return json(res, { ok: false, error: "EMAIL_TAKEN", errors: { email: "EMAIL_TAKEN" } }, 409);
 
     const u = await create(db, v);
-    return json({ ok: true, user: publicUser(u), token: newToken(u.id) }, 201);
+    return json(res, { ok: true, user: publicUser(u), token: newToken(u.id) }, 201);
   } catch (e) {
     if (String(e.code || "").startsWith("23") || /duplicate key/i.test(String(e.message || ""))) {
-      return json({ ok: false, error: "EMAIL_TAKEN", errors: { email: "EMAIL_TAKEN" } }, 409);
+      return json(res, { ok: false, error: "EMAIL_TAKEN", errors: { email: "EMAIL_TAKEN" } }, 409);
     }
-    return json({ ok: false, error: "SERVER" }, 500);
+    return json(res, { ok: false, error: "SERVER" }, 500);
   }
 };
