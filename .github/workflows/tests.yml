@@ -9,7 +9,9 @@ on:
 jobs:
   unit:
     name: Unit (geo / auth / i18n) + build
-    runs-on: ubuntu-latest
+    # ubuntu-latest is 26.04, which playwright 1.57 (the version the E2E suites are
+    # written against) does not support yet; stay on 24.04.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
