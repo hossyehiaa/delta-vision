@@ -1,0 +1,14 @@
+{
+  "name": "delta-vision",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Delta Vision \u2014 crop classification of the Nile Delta in feddan (single-file static app)",
+  "scripts": {
+    "build": "python3 build.py",
+    "test": "PROJ4_PATH=$PWD/vendor/proj4/proj4.js node test/geo.test.js src/geo.js test/fixtures ref/bourj_reference.json test/fixtures/bourj && node test/auth.test.js src/auth.js && node test/i18n.test.js src/i18n.js src/data.js",
+    "test:e2e": "node test/live.test.js public/index.html test/fixtures test/fixtures/bourj && node test/e2e.js public/index.html test/fixtures test/fixtures/bourj shots"
+  },
+  "devDependencies": {
+    "playwright": "^1.57.0"
+  }
+}

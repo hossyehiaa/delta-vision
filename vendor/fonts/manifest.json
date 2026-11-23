@@ -1,0 +1,98 @@
+[
+ {
+  "family": "Cairo",
+  "weight": "400",
+  "subset": "arabic",
+  "file": "cairo-400-arabic.woff2",
+  "bytes": 30712,
+  "source": "https://fonts.gstatic.com/s/cairo/v31/SLXVc1nY6HkvangtZmpQdkhzfH5lkSscQyyS8p4_RHH1.woff2"
+ },
+ {
+  "family": "Cairo",
+  "weight": "400",
+  "subset": "latin",
+  "file": "cairo-400-latin.woff2",
+  "bytes": 33644,
+  "source": "https://fonts.gstatic.com/s/cairo/v31/SLXVc1nY6HkvangtZmpQdkhzfH5lkSscRiyS8p4_RA.woff2"
+ },
+ {
+  "family": "Cairo",
+  "weight": "600",
+  "subset": "arabic",
+  "file": "cairo-600-arabic.woff2",
+  "bytes": 30712,
+  "source": "https://fonts.gstatic.com/s/cairo/v31/SLXVc1nY6HkvangtZmpQdkhzfH5lkSscQyyS8p4_RHH1.woff2"
+ },
+ {
+  "family": "Cairo",
+  "weight": "600",
+  "subset": "latin",
+  "file": "cairo-600-latin.woff2",
+  "bytes": 33644,
+  "source": "https://fonts.gstatic.com/s/cairo/v31/SLXVc1nY6HkvangtZmpQdkhzfH5lkSscRiyS8p4_RA.woff2"
+ },
+ {
+  "family": "Cairo",
+  "weight": "700",
+  "subset": "arabic",
+  "file": "cairo-700-arabic.woff2",
+  "bytes": 30712,
+  "source": "https://fonts.gstatic.com/s/cairo/v31/SLXVc1nY6HkvangtZmpQdkhzfH5lkSscQyyS8p4_RHH1.woff2"
+ },
+ {
+  "family": "Cairo",
+  "weight": "700",
+  "subset": "latin",
+  "file": "cairo-700-latin.woff2",
+  "bytes": 33644,
+  "source": "https://fonts.gstatic.com/s/cairo/v31/SLXVc1nY6HkvangtZmpQdkhzfH5lkSscRiyS8p4_RA.woff2"
+ },
+ {
+  "family": "Poppins",
+  "weight": "400",
+  "subset": "latin-ext",
+  "file": "poppins-400-latin-ext.woff2",
+  "bytes": 5640,
+  "source": "https://fonts.gstatic.com/s/poppins/v24/pxiEyp8kv8JHgFVrJJnecnFHGPezSQ.woff2"
+ },
+ {
+  "family": "Poppins",
+  "weight": "400",
+  "subset": "latin",
+  "file": "poppins-400-latin.woff2",
+  "bytes": 7900,
+  "source": "https://fonts.gstatic.com/s/poppins/v24/pxiEyp8kv8JHgFVrJJfecnFHGPc.woff2"
+ },
+ {
+  "family": "Poppins",
+  "weight": "500",
+  "subset": "latin",
+  "file": "poppins-500-latin.woff2",
+  "bytes": 7740,
+  "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLGT9Z1xlFd2JQEk.woff2"
+ },
+ {
+  "family": "Poppins",
+  "weight": "600",
+  "subset": "latin-ext",
+  "file": "poppins-600-latin-ext.woff2",
+  "bytes": 5552,
+  "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLEj6Z1JlFd2JQEl8qw.woff2"
+ },
+ {
+  "family": "Poppins",
+  "weight": "600",
+  "subset": "latin",
+  "file": "poppins-600-latin.woff2",
+  "bytes": 7992,
+  "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLEj6Z1xlFd2JQEk.woff2"
+ },
+ {
+  "family": "Poppins",
+  "weight": "700",
+  "subset": "latin",
+  "file": "poppins-700-latin.woff2",
+  "bytes": 7848,
+  "source": "https://fonts.gstatic.com/s/poppins/v24/pxiByp8kv8JHgFVrLCz7Z1xlFd2JQEk.woff2"
+ }
+]

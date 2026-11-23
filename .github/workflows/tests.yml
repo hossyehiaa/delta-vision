@@ -1,0 +1,36 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  unit:
+    name: Unit (geo / auth / i18n) + build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install Pillow
+      - run: python3 build.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: geo suite (140 checks, vs pyproj reference)
+        env:
+          PROJ4_PATH: ${{ github.workspace }}/vendor/proj4/proj4.js
+        run: node test/geo.test.js src/geo.js test/fixtures ref/bourj_reference.json test/fixtures/bourj
+      - name: auth suite (39 checks)
+        run: node test/auth.test.js src/auth.js
+      - name: i18n suite (87 checks)
+        run: node test/i18n.test.js src/i18n.js src/data.js
+      - name: live-backend E2E (12 checks)
+        run: |
+          npx playwright@1.57.0 install --with-deps chromium
+          node test/live.test.js public/index.html test/fixtures test/fixtures/bourj
+      - name: preview E2E (54 checks)
+        run: node test/e2e.js public/index.html test/fixtures test/fixtures/bourj shots

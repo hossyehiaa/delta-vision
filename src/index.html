@@ -1,0 +1,606 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Delta Vision — دلتا فيجن</title>
+<meta name="description" content="Crop classification of the Nile Delta with Sentinel-2: shapefile upload, 11 algorithms, areas in feddan.">
+<meta name="color-scheme" content="light">
+<meta name="theme-color" content="#c6f24e">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 3l7 16H5l7-16z' fill='%23151515'/%3E%3Ccircle cx='12' cy='16.5' r='2.6' fill='%23c6f24e'/%3E%3C/svg%3E">
+<meta property="og:title" content="Delta Vision — crop maps of the Nile Delta in feddan">
+<meta property="og:description" content="Upload a shapefile, pick a season and an algorithm, and read every crop area in feddan. 12 classes, 11 algorithms, Arabic-first.">
+<meta property="og:type" content="website">
+<meta name="twitter:card" content="summary_large_image">
+<style>
+/*__FONTS__*/
+/*__LEAFLET_CSS__*/
+/*__STYLE__*/
+</style>
+</head>
+<body>
+<noscript><p style="text-align:center;padding:24px;font-family:sans-serif">This application needs JavaScript. — هذا التطبيق يحتاج تشغيل الجافاسكربت في المتصفح.</p></noscript>
+
+<header class="nav" id="nav">
+  <div class="container nav-inner">
+    <a class="brand" href="#/" data-nav>
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#151515" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 3l7 16H5l7-16z" fill="#151515" stroke="none"></path><circle cx="12" cy="16.5" r="2.6" fill="#c6f24e" stroke="none"></circle>
+        </svg>
+      </span>
+      <span class="brand-text"><b data-i18n="brand.name">Delta Vision</b><small data-i18n="brand.tagline"></small></span>
+    </a>
+    <div class="nav-drawer" id="nav-drawer">
+      <nav class="nav-links" id="nav-links" aria-label="Delta Vision">
+        <a href="#/" data-nav data-i18n="nav.home"></a>
+        <a href="#/workspace" data-nav data-i18n="nav.workspace"></a>
+        <a href="#/algorithms" data-nav data-i18n="nav.algorithms"></a>
+        <a href="#/upload" data-nav data-i18n="nav.upload"></a>
+        <a href="#/guide" data-nav data-i18n="nav.guide"></a>
+      </nav>
+      <div class="nav-auth" id="nav-auth"></div>
+    </div>
+    <button class="menu-btn" id="menu-btn" aria-expanded="false" aria-controls="nav-drawer">
+      <span class="sr-only" data-i18n="nav.menu"></span>
+      <svg class="icon icon-open" viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6h18M3 12h18M3 18h18"></path></svg>
+      <svg class="icon icon-close" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+    </button>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- ================================================================ HOME -->
+<div class="view" id="view-home">
+  <div class="container">
+    <section class="hero reveal">
+      <figure class="hero-media">
+        <img id="img-hero" data-img="hero" alt="" data-i18n-alt="home.heroAlt">
+        <div class="hero-float">
+          <span class="hero-float-value num" id="hero-feddan">141,841.26</span>
+          <span class="hero-float-label" data-i18n="home.floatLabel"></span>
+        </div>
+      </figure>
+      <div class="hero-copy">
+        <span class="badge"><i></i><span data-i18n="home.badge"></span></span>
+        <h1 data-i18n="home.title"></h1>
+        <p class="lead" data-i18n="home.subtitle"></p>
+        <div class="btn-row">
+          <button class="btn btn-lime btn-lg" data-scroll="workspace" data-i18n="home.ctaPrimary"></button>
+          <button class="btn btn-ghost btn-lg" data-scroll="home-steps" data-i18n="home.ctaSecondary"></button>
+        </div>
+        <div class="chip-row">
+          <span class="chip" data-i18n="home.chipAlgo"></span>
+          <span class="chip" data-i18n="home.chipRes"></span>
+          <span class="chip" data-i18n="home.chipShp"></span>
+        </div>
+        <div class="hero-stats" id="hero-stats"></div>
+      </div>
+    </section>
+
+    <section class="carousel reveal" id="carousel" aria-roledescription="carousel">
+      <div class="carousel-stage" id="carousel-stage"></div>
+      <div class="carousel-caption">
+        <div class="carousel-thumbs" id="carousel-thumbs"></div>
+        <div class="carousel-texts" id="carousel-texts"></div>
+        <div class="carousel-controls">
+          <span class="carousel-page num" id="carousel-page" aria-live="polite"></span>
+          <span class="round-pair">
+            <button class="round-btn round-dark" id="carousel-prev">
+              <span class="sr-only" data-i18n="common.prev"></span>
+              <svg class="icon icon-dir" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+            </button>
+            <button class="round-btn round-lime" id="carousel-next">
+              <span class="sr-only" data-i18n="common.next"></span>
+              <svg class="icon icon-dir" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+            </button>
+          </span>
+        </div>
+      </div>
+    </section>
+
+    <section class="section panel-block reveal" id="home-outputs">
+      <span class="watermark" id="product-watermark" aria-hidden="true"></span>
+      <div class="section-head">
+        <div>
+          <span class="kicker" data-i18n="home.product.kicker"></span>
+          <h2 data-i18n="home.product.title"></h2>
+        </div>
+        <p class="section-text" data-i18n="home.product.text"></p>
+      </div>
+      <div class="product-row" id="product-row"></div>
+      <div class="products-foot">
+        <p class="muted" data-i18n="home.product.ask"></p>
+        <a class="btn btn-lime" href="#/workspace" data-i18n="home.product.more"></a>
+        <span class="round-pair">
+          <button class="round-btn round-ghost" id="product-prev">
+            <span class="sr-only" data-i18n="common.prev"></span>
+            <svg class="icon icon-dir" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+          </button>
+          <button class="round-btn round-lime" id="product-next">
+            <span class="sr-only" data-i18n="common.next"></span>
+            <svg class="icon icon-dir" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 6l6 6-6 6"></path></svg>
+          </button>
+        </span>
+      </div>
+    </section>
+
+    <section class="section reveal" id="home-features">
+      <div class="split-head">
+        <h2 data-i18n="home.features.title"></h2>
+        <div class="split-head-side">
+          <p data-i18n="home.features.text"></p>
+          <a class="btn btn-lime" href="#/workspace" data-i18n="home.features.cta"></a>
+        </div>
+      </div>
+      <div class="feature-layout">
+        <div class="feature-grid" id="feature-grid"></div>
+        <div class="feature-photos">
+          <figure><img data-img="p_mosaic" alt="" id="img-f1"></figure>
+          <figure><img data-img="c_drone" alt="" id="img-f2"></figure>
+        </div>
+      </div>
+      <p class="fineprint features-note" data-i18n="home.features.note"></p>
+    </section>
+
+    <section class="section reveal" id="home-steps">
+      <div class="split-head">
+        <h2 data-i18n="home.steps.title"></h2>
+        <div class="split-head-side">
+          <a class="btn btn-ghost" href="#/guide" data-i18n="ws.algorithm.more"></a>
+        </div>
+      </div>
+      <div class="steps" id="steps"></div>
+    </section>
+
+    <section class="section cta-band reveal">
+      <div>
+        <h2 data-i18n="home.cta.title"></h2>
+        <p data-i18n="home.cta.text"></p>
+      </div>
+      <div class="btn-row">
+        <a class="btn btn-outline-dark btn-lg" href="#/signup" data-i18n="home.cta.button"></a>
+        <a class="btn btn-outline-dark" href="#/login" data-i18n="home.cta.login"></a>
+      </div>
+    </section>
+    <p class="fineprint home-note" data-i18n="home.aiNote"></p>
+  </div>
+</div>
+
+<!-- ================================================================ LOGIN -->
+<div class="view" id="view-login">
+  <div class="container">
+    <div class="auth-wrap">
+      <section class="auth-card">
+        <a class="back-link" href="#/">
+          <svg class="icon icon-dir" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+          <span data-i18n="login.back"></span>
+        </a>
+        <h1 data-i18n="login.title"></h1>
+        <p class="lead" data-i18n="login.subtitle"></p>
+        <form id="login-form" novalidate>
+          <div class="form-err" id="login-err" hidden></div>
+          <label class="field">
+            <span data-i18n="login.email"></span>
+            <input type="email" id="login-email" name="email" autocomplete="email" inputmode="email" spellcheck="false" data-i18n-ph="login.emailPh">
+            <span class="field-err" data-err="email"></span>
+          </label>
+          <label class="field">
+            <span data-i18n="login.password"></span>
+            <input type="password" id="login-password" name="password" autocomplete="current-password">
+            <span class="field-err" data-err="password"></span>
+          </label>
+          <div class="btn-row">
+            <button class="btn btn-lime btn-lg" type="submit" data-i18n="login.submit"></button>
+          </div>
+        </form>
+        <div class="auth-alt"><span data-i18n="login.alt"></span> <a href="#/signup" data-i18n="login.toSignup"></a></div>
+        <div class="demo-box">
+          <div>
+            <b data-i18n="login.demoTitle"></b>
+            <p data-i18n="login.demoText"></p>
+            <dl class="demo-creds">
+              <div><dt data-i18n="login.demoEmail"></dt><dd id="demo-email"></dd></div>
+              <div><dt data-i18n="login.demoPassword"></dt><dd id="demo-password"></dd></div>
+            </dl>
+          </div>
+          <button class="btn btn-dark" id="demo-btn" data-i18n="login.demoButton"></button>
+        </div>
+      </section>
+      <figure class="auth-media"><img data-img="c_wheat" alt="" id="img-login"></figure>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ SIGNUP -->
+<div class="view" id="view-signup">
+  <div class="container">
+    <div class="auth-wrap">
+      <section class="auth-card">
+        <a class="back-link" href="#/">
+          <svg class="icon icon-dir" viewBox="0 0 24 24" aria-hidden="true"><path d="M15 6l-6 6 6 6"></path></svg>
+          <span data-i18n="signup.back"></span>
+        </a>
+        <h1 data-i18n="signup.title"></h1>
+        <p class="lead" data-i18n="signup.subtitle"></p>
+        <form id="signup-form" novalidate>
+          <div class="form-err" id="signup-err" hidden></div>
+          <label class="field">
+            <span data-i18n="signup.name"></span>
+            <input type="text" id="su-name" name="name" autocomplete="name" data-i18n-ph="signup.namePh">
+            <span class="field-err" data-err="name"></span>
+          </label>
+          <label class="field">
+            <span><span data-i18n="signup.org"></span> <span class="field-hint" data-i18n="common.optional"></span></span>
+            <input type="text" id="su-org" name="org" autocomplete="organization" data-i18n-ph="signup.orgPh">
+          </label>
+          <label class="field">
+            <span data-i18n="signup.email"></span>
+            <input type="email" id="su-email" name="email" autocomplete="email" inputmode="email" spellcheck="false" data-i18n-ph="signup.emailPh">
+            <span class="field-err" data-err="email"></span>
+          </label>
+          <label class="field">
+            <span data-i18n="signup.password"></span>
+            <input type="password" id="su-password" name="password" autocomplete="new-password">
+            <span class="field-hint" data-i18n="signup.passwordHint"></span>
+            <span class="field-err" data-err="password"></span>
+          </label>
+          <label class="field">
+            <span data-i18n="signup.confirm"></span>
+            <input type="password" id="su-confirm" name="confirm" autocomplete="new-password" data-i18n-ph="signup.confirmPh">
+            <span class="field-err" data-err="confirm"></span>
+          </label>
+          <div class="btn-row">
+            <button class="btn btn-lime btn-lg" type="submit" data-i18n="signup.submit"></button>
+          </div>
+        </form>
+        <div class="auth-alt"><span data-i18n="signup.alt"></span> <a href="#/login" data-i18n="signup.toLogin"></a></div>
+        <p class="fineprint auth-note" data-i18n="signup.note"></p>
+      </section>
+      <figure class="auth-media"><img data-img="c_rice" alt="" id="img-signup"></figure>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ WORKSPACE -->
+<div class="view" id="view-workspace">
+  <div class="container">
+    <div class="ws-head">
+      <div>
+        <h1 id="ws-head-title" data-i18n="ws.title"></h1>
+        <p data-i18n="ws.subtitle"></p>
+      </div>
+      <span class="preview-badge" id="mode-badge"><i></i><span data-i18n="ws.previewBadge"></span></span>
+    </div>
+    <div class="preview-note">
+      <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path d="M12 8v5M12 16.5v.01"></path></svg>
+      <span data-i18n="ws.previewText"></span>
+    </div>
+    <div class="ws-grid">
+      <div class="ws-side">
+
+        <section class="card" id="card-aoi">
+          <h2 class="card-title" data-i18n="ws.studyArea"></h2>
+          <div class="tabs" id="aoi-tabs" role="tablist">
+            <button class="tab is-on" data-tab="upload" data-i18n="ws.tabs.upload"></button>
+            <button class="tab" data-tab="draw" data-i18n="ws.tabs.draw"></button>
+            <button class="tab" data-tab="circle" data-i18n="ws.tabs.circle"></button>
+            <button class="tab" data-tab="bbox" data-i18n="ws.tabs.bbox"></button>
+          </div>
+
+          <div class="tabpanel is-on" id="panel-upload">
+            <div class="dropzone" id="shp-drop">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5"></path><path d="M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4"></path></svg>
+              <b data-i18n="ws.upload.drop"></b>
+              <small><span data-i18n="ws.upload.or"></span> <span class="dz-browse" data-i18n="ws.upload.browse"></span></small>
+              <input type="file" id="shp-input" multiple accept=".shp,.dbf,.prj,.cpg,.shx,.zip" aria-label="Shapefile">
+            </div>
+            <p class="hint" data-i18n="ws.upload.hint"></p>
+            <div class="field">
+              <span data-i18n="ws.upload.encoding"></span>
+              <select class="select" id="encoding-select"></select>
+            </div>
+            <div class="file-list" id="shp-files" hidden></div>
+            <button class="btn btn-ghost btn-sm" id="sample-aoi-btn" data-i18n-aria="ws.sample.button">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 16H5l7-16z"></path></svg>
+              <span data-i18n="ws.sample.button"></span>
+            </button>
+            <p class="hint" id="sample-text"></p>
+          </div>
+
+          <div class="tabpanel" id="panel-draw">
+            <p class="hint" data-i18n="ws.draw.hint"></p>
+            <div class="tool-row">
+              <button class="btn btn-ghost btn-sm" id="draw-poly" data-i18n="ws.draw.polygon"></button>
+              <button class="btn btn-ghost btn-sm" id="draw-rect" data-i18n="ws.draw.rectangle"></button>
+              <button class="btn btn-danger btn-sm" id="draw-clear" data-i18n="ws.draw.clear"></button>
+            </div>
+            <p class="hint" id="draw-state"></p>
+          </div>
+
+          <div class="tabpanel" id="panel-circle">
+            <p class="hint" data-i18n="ws.circle.hint"></p>
+            <div class="grid-2">
+              <label class="field"><span data-i18n="ws.circle.lon"></span><input class="input ltr num" type="number" step="any" id="circle-lon" placeholder="29.85"></label>
+              <label class="field"><span data-i18n="ws.circle.lat"></span><input class="input ltr num" type="number" step="any" id="circle-lat" placeholder="30.9"></label>
+            </div>
+            <label class="field"><span data-i18n="ws.circle.radius"></span><input class="input ltr num" type="number" step="any" min="0.01" max="500" id="circle-radius" placeholder="5"></label>
+            <button class="btn btn-dark btn-sm" id="circle-apply" data-i18n="ws.circle.apply"></button>
+          </div>
+
+          <div class="tabpanel" id="panel-bbox">
+            <div class="grid-2">
+              <label class="field"><span data-i18n="ws.bbox.minLon"></span><input class="input ltr num" type="number" step="any" id="bb-minlon" placeholder="29.7"></label>
+              <label class="field"><span data-i18n="ws.bbox.minLat"></span><input class="input ltr num" type="number" step="any" id="bb-minlat" placeholder="30.8"></label>
+              <label class="field"><span data-i18n="ws.bbox.maxLon"></span><input class="input ltr num" type="number" step="any" id="bb-maxlon" placeholder="30.0"></label>
+              <label class="field"><span data-i18n="ws.bbox.maxLat"></span><input class="input ltr num" type="number" step="any" id="bb-maxlat" placeholder="31.0"></label>
+            </div>
+            <button class="btn btn-dark btn-sm" id="bb-apply" data-i18n="ws.bbox.apply"></button>
+          </div>
+
+          <div class="aoi-summary" id="aoi-summary" hidden></div>
+        </section>
+
+        <section class="card" id="card-season">
+          <h2 class="card-title" data-i18n="ws.season.title"></h2>
+          <div class="tabs tabs-3" id="season-tabs" role="tablist">
+            <button class="tab is-on" data-season="winter" data-i18n="ws.season.winter"></button>
+            <button class="tab" data-season="summer" data-i18n="ws.season.summer"></button>
+            <button class="tab" data-season="full" data-i18n="ws.season.full"></button>
+          </div>
+          <div class="field">
+            <span data-i18n="ws.season.year"></span>
+            <select class="select" id="year-select"></select>
+          </div>
+          <p class="hint num" id="season-period"></p>
+          <p class="hint" id="season-competing"></p>
+        </section>
+
+        <section class="card" id="card-algorithm">
+          <h2 class="card-title" data-i18n="ws.algorithm.title"></h2>
+          <div class="field">
+            <select class="select" id="algorithm-select"></select>
+          </div>
+          <div class="stack" id="param-controls"></div>
+          <a class="btn btn-ghost btn-sm" href="#/algorithms" data-i18n="ws.algorithm.more"></a>
+        </section>
+
+        <section class="card" id="card-samples">
+          <h2 class="card-title" data-i18n="ws.samples.title"></h2>
+          <p class="hint" data-i18n="ws.samples.hint"></p>
+          <div class="field">
+            <span data-i18n="ws.samples.class"></span>
+            <select class="select" id="sample-class"></select>
+          </div>
+          <div class="tool-row">
+            <button class="btn btn-ghost btn-sm" id="sample-pick" data-i18n="ws.samples.pick"></button>
+            <label class="btn btn-ghost btn-sm" for="samples-csv">
+              <span data-i18n="ws.samples.upload"></span>
+              <input type="file" id="samples-csv" accept=".csv,.txt,text/csv" hidden>
+            </label>
+            <button class="btn btn-danger btn-sm" id="samples-clear" data-i18n="ws.samples.clear"></button>
+          </div>
+          <p class="hint" id="samples-state"></p>
+          <ul class="samples-list" id="samples-list" hidden></ul>
+          <p class="hint" id="samples-csv-hint" data-i18n="ws.samples.csvHint"></p>
+        </section>
+
+        <div class="ws-actions">
+          <button class="btn btn-lime btn-lg" id="run-btn" data-i18n="ws.run"></button>
+          <button class="btn btn-ghost" id="compare-btn" data-i18n="ws.compareBtn"></button>
+        </div>
+      </div>
+
+      <div class="card ws-map">
+        <div class="map-wrap">
+          <div id="map" dir="ltr" data-i18n-aria="ws.map.aria"></div>
+          <div class="map-tools">
+            <span class="seg" id="basemap-seg">
+              <button class="is-on" data-basemap="satellite" data-i18n="ws.map.satellite"></button>
+              <button data-basemap="streets" data-i18n="ws.map.streets"></button>
+            </span>
+            <label class="opacity">
+              <span data-i18n="ws.map.opacity"></span>
+              <input type="range" id="overlay-opacity" min="0.2" max="1" step="0.05" value="0.85">
+            </label>
+            <button class="btn btn-ghost btn-sm" id="fit-btn" data-i18n="ws.map.fit"></button>
+          </div>
+        </div>
+        <div class="legend" id="legend"></div>
+      </div>
+
+      <div class="card ws-results" id="results-card">
+        <div class="report-head" id="report-head"></div>
+        <div class="results-head">
+          <div>
+            <h2 class="card-title" data-i18n="ws.results.title"></h2>
+            <p class="results-run" id="results-run"></p>
+          </div>
+          <div class="results-actions">
+            <select class="select" id="unit-second" aria-label=""><option value="km2">km²</option><option value="ha">ha</option><option value="m2">m²</option></select>
+            <button class="btn btn-ghost btn-sm" id="csv-btn" data-i18n="ws.results.export"></button>
+            <button class="btn btn-ghost btn-sm" id="parcels-csv-btn" data-i18n="ws.results.parcelsCsv" hidden></button>
+            <button class="btn btn-dark btn-sm" id="print-btn" data-i18n="ws.results.print"></button>
+          </div>
+        </div>
+        <div class="stack" id="results-empty">
+          <div class="empty">
+            <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="5" width="16" height="14" rx="2"></rect><path d="M4 10h16M9 19V10"></path></svg>
+            <b data-i18n="ws.results.title"></b>
+            <p data-i18n="ws.results.empty"></p>
+          </div>
+        </div>
+        <div class="stack" id="results-body" hidden>
+          <div class="stat-row" id="stat-row"></div>
+          <div class="results-body">
+            <div class="stack">
+              <h3 class="sub-title" data-i18n="ws.results.tableTitle"></h3>
+              <div class="table-wrap"><table class="dv-table" id="class-table"></table></div>
+              <h3 class="sub-title"><span data-i18n="ws.results.parcelsTitle"></span></h3>
+              <div class="table-wrap"><table class="dv-table" id="parcels-table"></table></div>
+              <div class="stack">
+                <h3 class="sub-title" id="signature-title"></h3>
+                <p class="hint" id="signature-text"></p>
+                <figure class="signature" id="signature-chart"></figure>
+              </div>
+            </div>
+            <figure class="donut" id="donut"></figure>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- __PAGES_VIEW__ -->
+<!-- ================================================================ ALGORITHMS -->
+<div class="view" id="view-algorithms">
+  <div class="container">
+    <div class="page-head">
+      <h1 data-i18n="algo.title"></h1>
+      <p data-i18n="algo.subtitle"></p>
+      <div class="btn-row" style="margin-top:18px">
+        <a class="btn btn-lime" href="#/workspace" data-i18n="algo.cta"></a>
+      </div>
+    </div>
+    <div class="algo-group" id="algo-groups"></div>
+    <section class="section">
+      <div class="split-head">
+        <h2 data-i18n="algo.protocol.title"></h2>
+      </div>
+      <ol class="protocol" id="algo-protocol"></ol>
+    </section>
+  </div>
+</div>
+
+<!-- ================================================================ DATA UPLOAD -->
+<div class="view" id="view-upload">
+  <div class="container">
+    <div class="page-head">
+      <h1 data-i18n="upload.title"></h1>
+      <p data-i18n="upload.subtitle"></p>
+    </div>
+    <div class="upload-grid">
+      <section class="card">
+        <h2 class="card-title" data-i18n="upload.shpTitle"></h2>
+        <p class="card-sub" data-i18n="upload.shpText"></p>
+        <div class="dropzone" id="up-shp-drop">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5"></path><path d="M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4"></path></svg>
+          <b data-i18n="ws.upload.drop"></b>
+          <small><span data-i18n="ws.upload.or"></span> <span class="dz-browse" data-i18n="ws.upload.browse"></span></small>
+          <input type="file" id="up-shp-input" multiple accept=".shp,.dbf,.prj,.cpg,.shx,.zip" aria-label="Shapefile">
+        </div>
+        <p class="hint" data-i18n="ws.upload.hint"></p>
+      </section>
+      <section class="card">
+        <h2 class="card-title" data-i18n="upload.csvTitle"></h2>
+        <p class="card-sub" data-i18n="upload.csvText"></p>
+        <div class="dropzone" id="up-csv-drop">
+          <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8l-5-5z"></path><path d="M14 3v5h5"></path></svg>
+          <b data-i18n="ws.samples.upload"></b>
+          <small><span data-i18n="ws.upload.or"></span> <span class="dz-browse" data-i18n="ws.upload.browse"></span></small>
+          <input type="file" id="up-csv-input" accept=".csv,.txt,text/csv" aria-label="CSV">
+        </div>
+        <p class="hint" data-i18n="ws.samples.csvHint"></p>
+        <button class="btn btn-ghost btn-sm" id="csv-template-btn" data-i18n="upload.template"></button>
+      </section>
+    </div>
+    <section class="upload-summary card" id="upload-summary" hidden></section>
+    <div class="btn-row">
+      <button class="btn btn-lime btn-lg" id="upload-open-btn" data-i18n="upload.open"></button>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================ GUIDE -->
+<div class="view" id="view-guide">
+  <div class="container">
+    <div class="page-head">
+      <h1 data-i18n="guide.title"></h1>
+      <p data-i18n="guide.subtitle"></p>
+    </div>
+    <div class="guide-grid">
+      <div>
+        <h2 class="sub-title" data-i18n="guide.stepsTitle"></h2>
+        <div class="guide-steps" id="guide-steps"></div>
+      </div>
+      <div>
+        <h2 class="sub-title" data-i18n="guide.faqTitle"></h2>
+        <div class="faq" id="guide-faq"></div>
+      </div>
+    </div>
+    <section class="section">
+      <h2 class="sub-title" data-i18n="guide.limitsTitle"></h2>
+      <div class="limits">
+        <div class="limit"><b><span class="dot dot-ok"></span><span data-i18n="guide.limits.real.title"></span></b><p data-i18n="guide.limits.real.text"></p></div>
+        <div class="limit"><b><span class="dot dot-warn"></span><span data-i18n="guide.limits.preview.title"></span></b><p data-i18n="guide.limits.preview.text"></p></div>
+        <div class="limit"><b><span class="dot dot-info"></span><span data-i18n="guide.limits.demo.title"></span></b><p data-i18n="guide.limits.demo.text"></p></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+<!-- ================================================================ FOOTER -->
+<footer class="footer">
+  <div class="container">
+    <div class="footer-grid">
+      <div>
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="#151515" stroke-width="2">
+              <path d="M12 3l7 16H5l7-16z" fill="#151515" stroke="none"></path><circle cx="12" cy="16.5" r="2.6" fill="#c6f24e" stroke="none"></circle>
+            </svg>
+          </span>
+          <span class="brand-text"><b data-i18n="brand.name"></b><small data-i18n="brand.tagline"></small></span>
+        </div>
+        <p class="footer-about" data-i18n="footer.about"></p>
+      </div>
+      <div>
+        <h4 data-i18n="footer.links"></h4>
+        <ul>
+          <li><a href="#/" data-i18n="nav.home"></a></li>
+          <li><a href="#/workspace" data-i18n="nav.workspace"></a></li>
+          <li><a href="#/algorithms" data-i18n="nav.algorithms"></a></li>
+          <li><a href="#/upload" data-i18n="nav.upload"></a></li>
+          <li><a href="#/guide" data-i18n="nav.guide"></a></li>
+        </ul>
+      </div>
+      <div class="footer-credits">
+        <h4 data-i18n="footer.credits"></h4>
+        <p data-i18n="footer.data"></p>
+        <p data-i18n="footer.software"></p>
+        <p data-i18n="footer.build"></p>
+      </div>
+    </div>
+    <div class="footer-bottom"><span data-i18n="footer.rights"></span><span class="num">2025–2026</span></div>
+  </div>
+</footer>
+
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<dialog class="dialog" id="compare-dialog">
+  <div class="dialog-inner">
+    <div class="dialog-head">
+      <h2 data-i18n="ws.compare.title"></h2>
+      <button class="round-btn round-ghost" id="compare-close">
+        <span class="sr-only" data-i18n="ws.compare.close"></span>
+        <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"></path></svg>
+      </button>
+    </div>
+    <p class="hint" data-i18n="ws.compare.text"></p>
+    <div class="table-wrap"><table class="dv-table compare-table" id="compare-table"></table></div>
+  </div>
+</dialog>
+
+<script>
+/*__PROJ4__*/
+/*__LEAFLET__*/
+/*__GEO__*/
+/*__AUTH__*/
+/*__DATA__*/
+/*__I18N__*/
+/*__APP__*/
+</script>
+</body>
+</html>

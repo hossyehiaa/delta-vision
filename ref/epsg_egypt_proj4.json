@@ -1,0 +1,146 @@
+{
+ "22991": {
+  "proj4": "+proj=tmerc +lat_0=30 +lon_0=35 +k=1 +x_0=300000 +y_0=1100000 +ellps=helmert +units=m +towgs84=-130,110,-13 +no_defs",
+  "name": "Egypt 1907 / Blue Belt",
+  "accuracy_m": 11.0,
+  "x": 155828.0821499511,
+  "y": 1156370.5112424185,
+  "lon": 33.49999637416769,
+  "lat": 30.499982336092167
+ },
+ "22992": {
+  "proj4": "+proj=tmerc +lat_0=30 +lon_0=31 +k=1 +x_0=615000 +y_0=810000 +ellps=helmert +units=m +towgs84=-130,110,-13 +no_defs",
+  "name": "Egypt 1907 / Red Belt",
+  "accuracy_m": 11.0,
+  "x": 480946.89956273953,
+  "y": 907269.8316038956,
+  "lon": 29.600017851639006,
+  "lat": 30.87000753708697
+ },
+ "22993": {
+  "proj4": "+proj=tmerc +lat_0=30 +lon_0=27 +k=1 +x_0=700000 +y_0=200000 +ellps=helmert +units=m +towgs84=-130,110,-13 +no_defs",
+  "name": "Egypt 1907 / Purple Belt",
+  "accuracy_m": 11.0,
+  "x": 948532.6882811952,
+  "y": 299321.136040963,
+  "lon": 29.600017851639006,
+  "lat": 30.87000753708697
+ },
+ "22994": {
+  "proj4": "+proj=tmerc +lat_0=30 +lon_0=27 +k=1 +x_0=700000 +y_0=1200000 +ellps=helmert +units=m +towgs84=-130,110,-13 +no_defs",
+  "name": "Egypt 1907 / Extended Purple Belt",
+  "accuracy_m": 11.0,
+  "x": 948532.6882811952,
+  "y": 1299321.136040963,
+  "lon": 29.600017851639006,
+  "lat": 30.87000753708697
+ },
+ "23034": {
+  "proj4": "+proj=utm +zone=34 +ellps=intl +units=m +towgs84=-87,-98,-121 +no_defs",
+  "name": "ED50 / UTM zone 34N",
+  "accuracy_m": 10.0,
+  "x": 1323625.6183608836,
+  "y": 3447110.2940283683,
+  "lon": 29.599558348660743,
+  "lat": 30.8689126001774
+ },
+ "23035": {
+  "proj4": "+proj=utm +zone=35 +ellps=intl +units=m +towgs84=-87,-98,-121 +no_defs",
+  "name": "ED50 / UTM zone 35N",
+  "accuracy_m": 10.0,
+  "x": 748633.9176670593,
+  "y": 3418263.7471892936,
+  "lon": 29.599950655018002,
+  "lat": 30.870015794662944
+ },
+ "23036": {
+  "proj4": "+proj=utm +zone=36 +ellps=intl +units=m +towgs84=-89.05,-87.03,-124.56 +no_defs",
+  "name": "ED50 / UTM zone 36N",
+  "accuracy_m": 10.0,
+  "x": 174870.89994543663,
+  "y": 3420198.511639181,
+  "lon": 29.59966867335943,
+  "lat": 30.868868211918993
+ },
+ "23037": {
+  "proj4": "+proj=utm +zone=37 +ellps=intl +units=m +towgs84=-89.05,-87.03,-124.56 +no_defs",
+  "name": "ED50 / UTM zone 37N",
+  "accuracy_m": 10.0,
+  "x": -400554.19647751004,
+  "y": 3453362.6826784727,
+  "lon": 29.59966867335943,
+  "lat": 30.868868211918993
+ },
+ "3395": {
+  "proj4": "+proj=merc +lon_0=0 +k=1 +x_0=0 +y_0=0 +datum=WGS84 +units=m +no_defs",
+  "name": "WGS 84 / World Mercator",
+  "accuracy_m": null,
+  "x": 3295056.927480898,
+  "y": 3593956.9385444936,
+  "lon": 29.6,
+  "lat": 30.87
+ },
+ "3857": {
+  "proj4": "+proj=merc +a=6378137 +b=6378137 +lat_ts=0 +lon_0=0 +x_0=0 +y_0=0 +k=1 +units=m +nadgrids=@null +wktext +no_defs",
+  "name": "WGS 84 / Pseudo-Mercator",
+  "accuracy_m": null,
+  "x": 3295056.927480898,
+  "y": 3615877.652190609,
+  "lon": 29.6,
+  "lat": 30.87
+ },
+ "4326": {
+  "proj4": "+proj=longlat +datum=WGS84 +no_defs",
+  "name": "WGS 84",
+  "accuracy_m": null,
+  "x": 29.6,
+  "y": 30.87,
+  "lon": 29.6,
+  "lat": 30.87
+ },
+ "32634": {
+  "proj4": "+proj=utm +zone=34 +datum=WGS84 +units=m +no_defs",
+  "name": "WGS 84 / UTM zone 34N",
+  "accuracy_m": null,
+  "x": 1323590.0872146897,
+  "y": 3447058.530013187,
+  "lon": 29.6,
+  "lat": 30.87
+ },
+ "32635": {
+  "proj4": "+proj=utm +zone=35 +datum=WGS84 +units=m +no_defs",
+  "name": "WGS 84 / UTM zone 35N",
+  "accuracy_m": null,
+  "x": 748588.534359997,
+  "y": 3418090.045072111,
+  "lon": 29.6,
+  "lat": 30.87
+ },
+ "32636": {
+  "proj4": "+proj=utm +zone=36 +datum=WGS84 +units=m +no_defs",
+  "name": "WGS 84 / UTM zone 36N",
+  "accuracy_m": null,
+  "x": 174884.91010195087,
+  "y": 3420147.915271946,
+  "lon": 29.6,
+  "lat": 30.87
+ },
+ "32637": {
+  "proj4": "+proj=utm +zone=37 +datum=WGS84 +units=m +no_defs",
+  "name": "WGS 84 / UTM zone 37N",
+  "accuracy_m": null,
+  "x": -400515.3365670608,
+  "y": 3453310.645669497,
+  "lon": 29.6,
+  "lat": 30.87
+ },
+ "32702": {
+  "proj4": "+proj=utm +zone=2 +south +datum=WGS84 +units=m +no_defs",
+  "name": "WGS 84 / UTM zone 2S",
+  "accuracy_m": null,
+  "x": -1190638.1820012673,
+  "y": -7702205.751813177,
+  "lon": 25.0,
+  "lat": -20.0
+ }
+}
