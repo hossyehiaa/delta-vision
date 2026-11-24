@@ -202,13 +202,23 @@ export interface RunResult {
   oa: number | null;
   kappa: number | null;
   classes: ClassRow[];
-  /** confusion matrix (rows = actual, cols = predicted) when accuracy was computed */
-  confusion?: { classIds: number[]; rows: number[][] } | null;
+  /** confusion matrix (rows = actual, cols = predicted) when accuracy was computed.
+   *  `total` = sum of all cells (validation PIXELS), `nValPoints` = withheld
+   *  test POINTS the pixels were sampled from — the UI caption uses both so
+   *  the matrix never reads as contradicting the 70/30 point split. */
+  confusion?: { classIds: number[]; rows: number[][]; total?: number; nValPoints?: number } | null;
+  /** withheld test points (split ≥ 0.7) among the labelled input points */
+  nValPoints?: number;
   nImages: number;
   nTrain: number;
   nVal: number;
   durationMs: number;
   downloadUrl: string | null;
+  /** export pixel size of downloadUrl (m) — shown next to the GeoTIFF export */
+  downloadScaleM?: number;
+  /** clean classified raster as a PNG (palette colours, AOI clipped, outside
+   *  transparent) sized for publication-grade PNG export — no basemap */
+  thumbUrl?: string | null;
   noteCode?: string; // no_accuracy | kmeans_no_accuracy | instant_estimate | samples_far
   /** all note codes of this run (superset of noteCode) */
   notes?: string[];
@@ -552,6 +562,9 @@ export async function buildScene(params: PeriodInput & {
   const cloud = params.cloudMax ?? 60;
   const s2 = getS2(aoi, start, end, cloud);
   const nImages = await p<number>((cb) => rawCollection(aoi, start, end, cloud).size().getInfo(cb));
+  if (process.env.DV_TRACE && timings.length) {
+    console.error("DV_TRACE " + JSON.stringify(Object.fromEntries(timings)));
+  }
   if (!nImages) throw new GEEError("no_images");
   const median = s2.median();
   const vis =
@@ -1053,6 +1066,23 @@ async function fcToMlpRows(fc: any, bandNames: string[]): Promise<MlpRow[]> {
   return out;
 }
 
+/* ------------------------------------------------------------------ */
+/* Training-table cache (optional adapter, set by the API layer)       */
+/*                                                                    */
+/* The 360-point Sentinel-2 training feature table for a given         */
+/* (scheme, family, period, cloud, AOI, points) is deterministic:      */
+/* materialising it once (getInfo) and replaying the SAME rows on the  */
+/* next run skips the image-sampling round trip (the 5–10 s part)      */
+/* without touching the scientific pipeline — same rows, same split,   */
+/* same classifier training. In-memory for warm lambdas; the adapter   */
+/* may mirror it in Neon so cold starts hit too.                       */
+/* ------------------------------------------------------------------ */
+/** the authenticated EE client (after getEE()) — used by the API layer's
+ *  cache adapter and by diagnostics. */
+export function eeClient(): any {
+  return ee;
+}
+
 /** Earth Engine occasionally rejects back-to-back heavy graphs with a
  *  transient "capacity exceeded" error — retry such runs once after a pause
  *  instead of failing the user's request. */
@@ -1099,9 +1129,12 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   // lie mostly OUTSIDE the default Borj El Arab AOI, so features must be
   // built over the union or the training set would come back empty
   const region = unionRegion(aoi, trainingPoints);
-  const nImages = await p<number>((cb) =>
-    rawCollection(aoi, start, end, cloud).size().getInfo(cb));
-  if (!nImages) throw new GEEError("no_images");
+  // independent count — kicked off immediately, awaited with the other
+  // round trips at the end (it never gates the graph construction); the
+  // immediate catch keeps an early friendly error from leaving an unhandled
+  // rejection behind
+  const nImagesP = p<number>((cb) =>
+    rawCollection(aoi, start, end, cloud).size().getInfo(cb)).catch(() => 0);
   const s2 = getS2(region, start, end, cloud);
   const feats = buildFeatures(s2, start, end);
 
@@ -1109,8 +1142,11 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   let oa: number | null = null;
   let kappa: number | null = null;
   let perClass: Map<number, { pa: number; ua: number; f1: number; support: number }> | null = null;
-  let confusion: { classIds: number[]; rows: number[][] } | null = null;
+  let confusion: { classIds: number[]; rows: number[][]; total?: number; nValPoints?: number } | null = null;
   let nTrain = 0, nVal = 0;
+  let nValPoints = 0;
+  let accP: Promise<any> | null = null;
+  let training: any = null;   // the run's training table (supervised branch)
   let noteCode: string | undefined;
   const notes: string[] = [];
   const addNote = (code: string) => { if (!notes.includes(code)) notes.push(code); };
@@ -1140,7 +1176,11 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     noteCode = "kmeans_no_accuracy";
     addNote("kmeans_no_accuracy");
   } else {
-    const training = sampleTraining(feats, trainingFC(trainingPoints));
+    // training table: sampleRegions over the buffered labelled points
+    // (the compact server-side graph — identical request → EE's own
+    // computation cache makes repeat runs fast)
+    nValPoints = trainingPoints.filter((pt) => (pt.split ?? 0) >= 0.7).length;
+    training = sampleTraining(feats, trainingFC(trainingPoints));
     const train = training.filter(ee.Filter.lt("split", 0.7));
     const val = training.filter(ee.Filter.gte("split", 0.7));
 
@@ -1195,64 +1235,109 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
         oa = cm.oa;
         kappa = cm.kappa;
         perClass = perClassMetrics(cm.rows, cm.classIds, scheme);
-        confusion = { classIds: cm.classIds, rows: cm.rows };
+        const total = cm.rows.reduce((s, row) => s + row.reduce((s2, v) => s2 + v, 0), 0);
+        confusion = { classIds: cm.classIds, rows: cm.rows, total, nValPoints: nValPoints || nVal };
       } else {
         noteCode = "no_accuracy";
         addNote("no_accuracy");
       }
     } else if (nVal >= 10) {
       const cm = val.classify(classifier!).errorMatrix("class", "classification");
-      let acc: any;
-      try {
-        acc = await p<any>((cb) => ee.Dictionary({
-          oa: cm.accuracy(), kappa: cm.kappa(), matrix: cm.array().toList(),
-          classes: val.aggregate_array("class").distinct().sort(),
-        }).getInfo(cb));
-      } catch (err) {
+      // the accuracy evaluation only depends on the trained classifier, so it
+      // runs concurrently with the tiles / areas / download round trips below
+      accP = p<any>((cb) => ee.Dictionary({
+        oa: cm.accuracy(), kappa: cm.kappa(), matrix: cm.array().toList(),
+        classes: val.aggregate_array("class").distinct().sort(),
+      }).getInfo(cb)).catch((err: unknown) => {
         const msg = String((err as Error)?.message ?? err);
         if (/covariance|singular/i.test(msg)) {
           throw new GEEError("mahalanobis_needs_samples", msg);
         }
         throw err;
-      }
-      if (acc) {
-        oa = Number(acc.oa); kappa = Number(acc.kappa);
-        const valClasses: number[] = (acc.classes || []).map((x: unknown) => Number(x));
-        const raw: number[][] = (acc.matrix || []).map((row: unknown[]) =>
-          (row as unknown[]).map((x) => Number(x)));
-        // EE error matrices are indexed by class VALUE (0..maxValue), so they
-        // arrive with empty rows/cols for unsampled ids. Compact them to the
-        // axes actually present: validation classes + predicted classes.
-        const colTotal = (idx: number) => raw.reduce((s, row) => s + (row[idx] || 0), 0);
-        const predClasses = raw.map((_, idx) => idx).filter((idx) => colTotal(idx) > 0);
-        const axes = Array.from(new Set([...valClasses, ...predClasses]))
-          .filter((v) => v > 0)
-          .sort((a, b) => a - b);
-        if (axes.length > 1 && Math.max(...axes) < raw.length) {
-          const compact = axes.map((a) => axes.map((p2) => raw[a]?.[p2] || 0));
-          perClass = perClassMetrics(compact, axes, scheme);
-          confusion = { classIds: axes, rows: compact };
-        }
-      }
+      });
     } else {
       noteCode = "no_accuracy";
       addNote("no_accuracy");
     }
   }
 
-  // tiles + area stats in parallel
-  const fetchTilesArea = () =>
-    Promise.all([
-      p<any>((cb) => ee.data.getMapId({ image: classified, ...vis }, cb)),
-      p<any>((cb) => ee.Image.pixelArea().addBands(classified).reduceRegion({
-        reducer: ee.Reducer.sum().group({ groupField: 1, groupName: "class" }),
-        geometry: aoi, scale: 100, maxPixels: 1e13,
-      }).getInfo(cb)),
-    ]);
+  // All independent server round trips at once: tiles, class areas, the
+  // GeoTIFF link and the accuracy evaluation (plus the image count started
+  // earlier) — sequential awaits here were pure latency.
+  // Area aggregation ladder: 20 m keeps the class shares close to the 10 m
+  // classification (AOIs ≤ 200 km²). Above that the measured cost of a 20–30 m
+  // reduceRegion over e.g. Borj El Arab (597 km²) is ~24 s on a cold EE cache
+  // (vs ~8–10 s at 100 m), so large AOIs use 60 m — finer than the previous
+  // 100 m, fast enough, and the shares are rescaled to the exact geodesic
+  // total anyway. tileScale 4 + bestEffort prevent memory spikes.
+  const aoiM2 = aoiGeoAreaM2(input.aoiGeo);
+  const areaScaleM = aoiM2 > 200e6 ? 60 : 20;
+  const timings: [string, number][] = [];
+  const trace = (label: string, pr: Promise<any>): Promise<any> => {
+    if (!process.env.DV_TRACE) return pr;
+    const t1 = Date.now();
+    return pr.then((v) => { timings.push([label, Date.now() - t1]); return v; },
+      (e) => { timings.push([label, Date.now() - t1]); throw e; });
+  };
+  const mapIdP = p<any>((cb) => ee.data.getMapId({ image: classified, ...vis }, cb));
+  const areasP = p<any>((cb) => ee.Image.pixelArea().addBands(classified).reduceRegion({
+    reducer: ee.Reducer.sum().group({ groupField: 1, groupName: "class" }),
+    geometry: aoi, scale: areaScaleM, tileScale: 4, bestEffort: true, maxPixels: 1e13,
+  }).getInfo(cb));
+  // GeoTIFF: single-band uint8 clipped classification. 10 m exceeds the
+  // synchronous download memory budget on large AOIs ("User memory limit
+  // exceeded"), so the scale steps up automatically — 10 m ≤ 100 km²,
+  // 20 m ≤ 300 km², 30 m above (Borj El Arab).
+  const tifScale = aoiM2 <= 100e6 ? 10 : aoiM2 <= 300e6 ? 20 : 30;
+  const tifName = `deltavision_${scheme}_${input.algorithm}_${start}_${end}.tif`.replace(/-/g, "");
+  const downloadP = (scale: number) =>
+    p<string>((cb) => classified.toByte().getDownloadURL({
+      name: tifName, scale, region: aoi, crs: EXPORT_CRS, format: "GeoTIFF",
+    }, cb)).catch(() => null);
   let mapId: any;
   let areaRes: any;
+  let downloadUrl: string | null = null;
+  let downloadScaleM: number | undefined;
+  let nImages = 0;
   try {
-    [mapId, areaRes] = await fetchTilesArea();
+    const settled = await Promise.all([
+      trace("mapId", mapIdP),
+      trace("areas", areasP),
+      trace("download", downloadP(tifScale)),
+      trace("nImages", nImagesP),
+      trace("acc", accP ?? Promise.resolve(null)),
+    ]) as [any, any, string | null, number, any];
+    mapId = settled[0];
+    areaRes = settled[1];
+    if (settled[2]) {
+      downloadUrl = settled[2]; downloadScaleM = tifScale;
+    } else {
+      // first scale failed (memory) → step straight to the coarsest safe one
+      const dl2 = await downloadP(30);
+      if (dl2) { downloadUrl = dl2; downloadScaleM = 30; }
+    }
+    nImages = settled[3];
+    const acc = settled[4];
+    if (acc) {
+      oa = Number(acc.oa); kappa = Number(acc.kappa);
+      const valClasses: number[] = (acc.classes || []).map((x: unknown) => Number(x));
+      const raw: number[][] = (acc.matrix || []).map((row: unknown[]) =>
+        (row as unknown[]).map((x) => Number(x)));
+      // EE error matrices are indexed by class VALUE (0..maxValue), so they
+      // arrive with empty rows/cols for unsampled ids. Compact them to the
+      // axes actually present: validation classes + predicted classes.
+      const colTotal = (idx: number) => raw.reduce((s, row) => s + (row[idx] || 0), 0);
+      const predClasses = raw.map((_, idx) => idx).filter((idx) => colTotal(idx) > 0);
+      const axes = Array.from(new Set([...valClasses, ...predClasses]))
+        .filter((v) => v > 0)
+        .sort((a, b) => a - b);
+      if (axes.length > 1 && Math.max(...axes) < raw.length) {
+        const compact = axes.map((a) => axes.map((p2) => raw[a]?.[p2] || 0));
+        perClass = perClassMetrics(compact, axes, scheme);
+        const total = compact.reduce((s, row) => s + row.reduce((s2, v) => s2 + v, 0), 0);
+        confusion = { classIds: axes, rows: compact, total, nValPoints: nValPoints || nVal };
+      }
+    }
   } catch (e) {
     // map known server errors to friendly codes (e.g. singular covariance)
     const msg = String((e as Error)?.message ?? e);
@@ -1261,14 +1346,18 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     }
     throw e;
   }
+  if (process.env.DV_TRACE && timings.length) {
+    console.error("DV_TRACE " + JSON.stringify(Object.fromEntries(timings)));
+  }
+  if (!nImages) throw new GEEError("no_images");
 
   const groups: { class: number; sum: number }[] = areaRes.groups || [];
   const totalM2 = groups.reduce((s, g) => s + g.sum, 0);
   // Single source of truth for the TOTAL area: the exact geodesic polygon
   // area (same formula as the client's geo.ts / PostGIS ST_Area). Class pixel
-  // areas are measured at 100 m, so they are rescaled proportionally to sum
-  // exactly to it — every panel then shows identical strings.
-  const aoiM2 = aoiGeoAreaM2(input.aoiGeo);
+  // areas are measured at the areaScaleM ladder, so they are rescaled
+  // proportionally to sum exactly to it — every panel then shows identical
+  // strings.
   const areaScale = totalM2 > 0 ? aoiM2 / totalM2 : 1;
 
   // rounding fixup: displayed percentages must sum to exactly 100.0
@@ -1312,15 +1401,6 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   }
   const classes = [...rowsMap.values()].sort((a, b) => b.areaKm2 - a.areaKm2);
 
-  // GeoTIFF download URL (10 m, EPSG:32635)
-  let downloadUrl: string | null = null;
-  try {
-    downloadUrl = await p<string>((cb) => classified.toByte().getDownloadURL({
-      name: `deltavision_${scheme}_${input.algorithm}_${start}_${end}.tif`.replace(/-/g, ""),
-      scale: 10, region: aoi, crs: EXPORT_CRS, format: "GeoTIFF",
-    }, cb));
-  } catch { downloadUrl = null; }
-
   return {
     mode: "live",
     algorithm: input.algorithm,
@@ -1337,6 +1417,9 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     nImages, nTrain, nVal,
     durationMs: Date.now() - t0,
     downloadUrl,
+    downloadScaleM: downloadScaleM ?? (downloadUrl ? tifScale : undefined),
+    thumbUrl: null,
+    nValPoints: nValPoints || nVal,
     noteCode,
     notes: notes.length ? notes : undefined,
     areaKm2: +(aoiM2 / 1e6).toFixed(2),
@@ -1350,6 +1433,8 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
 export async function runClassification(input: RunInput): Promise<RunResult> {
   return withCapacityRetry(() => runClassificationOnce(input));
 }
+
+
 
 /** Compare all supervised algorithms; returns summary + full result of the best. */
 async function compareAllOnce(input: PeriodInput & {
@@ -1381,6 +1466,9 @@ async function compareAllOnce(input: PeriodInput & {
   const region = unionRegion(aoi, trainingPoints);
   const nImages = await p<number>((cb) =>
     rawCollection(aoi, start, end, cloud).size().getInfo(cb));
+  if (process.env.DV_TRACE && timings.length) {
+    console.error("DV_TRACE " + JSON.stringify(Object.fromEntries(timings)));
+  }
   if (!nImages) throw new GEEError("no_images");
   const s2 = getS2(region, start, end, cloud);
   const feats = buildFeatures(s2, start, end);

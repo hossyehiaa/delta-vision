@@ -34,10 +34,10 @@
   function token() { return readJSON(KEY_TOKEN); }
 
   // ------------------------------------------------------------------ fetch with timeout
-  function call(method, path, body) {
+  function call(method, path, body, opts) {
     if (API === null) { var off = new Error("OFFLINE"); off.code = "OFFLINE"; return Promise.reject(off); }
     var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
-    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, 12000);
+    var timer = setTimeout(function () { if (ctl) ctl.abort(); }, (opts && opts.timeoutMs) || 12000);
     var opt = { method: method, headers: {} };
     var tk = token();
     if (tk) opt.headers.Authorization = "Bearer " + tk;
@@ -126,7 +126,7 @@
       if (!up) { var r = A.ensureDemo(); var l = A.login(A.DEMO.email, A.DEMO.password); l.offline = true; return l; }
       return call("POST", "/api/auth/demo", {})
         .then(function (j) { return { ok: true, user: j.user, session: saveSession(j), offline: false }; })
-        .catch(function () { var fb = A.login(A.DEMO.email, A.DEMO.password); fb.offline = true; return fb; });
+        .catch(function () { A.ensureDemo(); var fb = A.login(A.DEMO.email, A.DEMO.password); fb.offline = true; return fb; });
     });
   }
 
@@ -169,15 +169,24 @@
   function apiBase() { return API; }
   /** GET /api/gee/health → { ok, mode: "live" | "demo", jobs, error }. Never rejects. */
   function geeHealth() {
-    return call("GET", "/api/gee/health").then(function (j) {
-      return {
-        ok: !!j.ok,
-        mode: j && j.mode === "live" ? "live" : "demo",
-        jobs: (j && j.jobs) || "sync",
-        error: (j && j.error) || null
-      };
-    }, function () {
-      return { ok: false, mode: "demo", jobs: "sync", error: "UNREACHABLE" };
+    var once = function () {
+      return call("GET", "/api/gee/health", undefined, { timeoutMs: 45000 }).then(function (j) {
+        return {
+          ok: !!j.ok,
+          mode: j && j.mode === "live" ? "live" : (j && j.mode === "engine_error" ? "error" : "demo"),
+          jobs: (j && j.jobs) || "sync",
+          error: (j && j.error) || null
+        };
+      }, function () {
+        return { ok: false, mode: "unreachable", jobs: "sync", error: "UNREACHABLE" };
+      });
+    };
+    // one retry after a short pause — a first-request blip must not decide the mode
+    return once().then(function (h) {
+      if (h.mode === "unreachable") {
+        return new Promise(function (r) { setTimeout(r, 1500); }).then(once);
+      }
+      return h;
     });
   }
 

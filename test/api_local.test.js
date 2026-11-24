@@ -119,9 +119,10 @@ function unwrap(r) { try { return JSON.parse(r.body); } catch (e) { return {}; }
   // bad payload
   res = await runs(mkreq("POST", { algorithm: "rf" }, token), mkres());
   ok(res.statusCode === 400 && unwrap(res).error === "BAD_AOI", "missing aoiGeo rejected", unwrap(res));
-  // demo account sees none of tester's runs
+  // demo account sees none of tester's runs (the demo account itself may
+  // legitimately carry saved history from real usage)
   res = await runs(mkreq("GET", undefined, demoTok), mkres());
-  ok(unwrap(res).runs.length === 0, "runs are per-user", unwrap(res));
+  ok(unwrap(res).runs.every((r) => r.aoiName !== "Test AOI"), "runs are per-user", unwrap(res).runs.filter((r) => r.aoiName === "Test AOI").length);
 
   console.log("== run by id");
   res = await runById(mkreq("GET", undefined, token, { id: runId }), mkres());

@@ -33,7 +33,7 @@
     picking: false,
     layers: { overlay: true, gt: false, aoi: true, ab: false },
     abSplit: 50,      // A/B wipe position (percent)
-    gee: { checked: false, live: false, url: null }  // real Earth Engine backend on the server
+    gee: { checked: false, live: false, demoConfirmed: false, unsure: false, url: null }  // real Earth Engine backend on the server
   };
   // Indicative Egyptian agronomy per class code (tons/feddan, m³/feddan) —
   // PLANNING figures for the decision-support panel, labelled as indicative
@@ -152,7 +152,7 @@
       d.appendChild(el("span", "stat-text", s.text));
       stats.appendChild(d);
     });
-    $("#hero-feddan").textContent = feddan(D.BOURJ.areaM2);
+    $("#hero-feddan").textContent = feddan(G.geometryAreaM2({ type: "Polygon", coordinates: [D.BOURJ.ring] }));
 
     // carousel: the same five photos, crossfading under the caption block
     var slides = t("home.slides"), total = slides.length;
@@ -397,8 +397,55 @@
       });
     });
   }
+  /** pull the user's recent live runs into the client cache (and the compare
+   *  table) — switching to an already-computed combination is instant even
+   *  right after login. Bounded: last 6 live runs, small AOIs only. */
+  var runCacheHydrated = false;
+  function hydrateRunCache() {
+    if (runCacheHydrated || !S || !S.isServer()) return;
+    runCacheHydrated = true;
+    S.listRuns().then(function (r) {
+      if (!r || !r.ok || !r.runs) return;
+      var live = r.runs.filter(function (x) { return x.mode === "live"; }).slice(0, 6);
+      live.forEach(function (meta) {
+        S.getRun(meta.id).then(function (run) {
+          if (!run || !run.results || !run.results.tileUrl) return;
+          try {
+            var geo = JSON.stringify(run.aoiGeo || {});
+            if (geo.length > 60000) return;   // skip huge shapefile AOIs
+            var input = {
+              scheme: run.scheme, algorithm: run.algorithm, season: run.season, year: run.year,
+              dateFrom: run.results.dateFrom, dateTo: run.results.dateTo,
+              params: run.params || {}, cloudMax: null,
+              samplePoints: run.samplePoints || [], aoiGeo: run.aoiGeo,
+            };
+            var rr = run.results;
+            var res = {
+              mode: "live", algorithm: run.algorithm, scheme: run.scheme || "general",
+              family: rr.family || null, activeClassIds: rr.activeClassIds || null,
+              excludedClassIds: rr.excludedClassIds || [], season: rr.season,
+              dateFrom: rr.dateFrom, dateTo: rr.dateTo, tileUrl: rr.tileUrl, previewImage: null,
+              oa: rr.oa, kappa: rr.kappa, classes: rr.classes || [], confusion: rr.confusion || null,
+              nValPoints: rr.nValPoints, nImages: rr.nImages, nTrain: rr.nTrain, nVal: rr.nVal,
+              sampleSource: rr.sampleSource, durationMs: rr.durationMs, noteCodes: rr.noteCodes || [],
+              downloadUrl: rr.downloadUrl, downloadScaleM: rr.downloadScaleM, areaKm2: rr.areaKm2,
+            };
+            // fill in the class display fields the snapshot keeps
+            res.classes = (res.classes || []).map(function (c) {
+              var cls = classById(c.classId, run.scheme || "general");
+              return Object.assign({ name: cls ? className(cls) : String(c.classId) }, c);
+            });
+            runCache.set(runCacheKey(input), res);
+            recordCompare(res);
+          } catch (e) { /* one bad row never breaks hydration */ }
+        }, function () { /* best-effort */ });
+      });
+    }, function () { /* offline: skip */ });
+  }
+
   function afterLogin(msg) {
     toast(msg);
+    hydrateRunCache();
     renderNavAuth();
     var next = "#/workspace";
     try { next = sessionStorage.getItem("dv_next") || next; sessionStorage.removeItem("dv_next"); } catch (e) { /* ignore */ }
@@ -408,21 +455,61 @@
   // ---------------------------------------------------------------- the map
   var map = null, aoiLayer = null, samplesLayer = null, overlayLayer = null, drawLayer = null, sceneLayer = null, sceneActive = null;
   var gtLayer = null, basemaps = null, activeBasemap = "satellite", hybridLabels = null, abOn = false;
+  /* Earth Engine dynamic-map overlays: tiles are natively rendered to ~z13–14
+   * (Sentinel-2 10 m); beyond that EE throttles/drops requests and Leaflet
+   * would discard the loaded imagery. maxNativeZoom keeps z13 tiles on screen
+   * while zooming to 19 (upscaled), keepBuffer holds a wide ring around the
+   * viewport, updateWhenIdle batches requests, and failed tiles retry twice
+   * with a backoff instead of vanishing. */
+  function geeTileOpts(extra) {
+    return Object.assign({
+      maxNativeZoom: 13, maxZoom: 19, keepBuffer: 6,
+      updateWhenIdle: true, updateWhenZooming: false,
+    }, extra || {});
+  }
+  function attachTileRetry(layer) {
+    layer.on("tileerror", function (ev) {
+      var tile = ev.tile;
+      if (!tile) return;
+      var tries = +(tile.getAttribute("data-retries") || 0);
+      if (tries >= 2) return;                       // up to 2 retries, then give up
+      tile.setAttribute("data-retries", String(tries + 1));
+      setTimeout(function () {
+        var src = tile.src;                         // same URL (throttle/timeout retry)
+        tile.src = "";
+        tile.src = src;
+      }, tries === 0 ? 600 : 1800);
+    });
+  }
   function initMap() {
     if (map) return;
     var Esri_WorldImagery = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" });
     var OSM = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" });
     var CartoDark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 20, subdomains: "abcd", attribution: "&copy; OpenStreetMap contributors &copy; CARTO" });
     hybridLabels = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, pane: "shadowPane" });
-    basemaps = { satellite: Esri_WorldImagery, streets: OSM, dark: CartoDark, hybrid: Esri_WorldImagery };
+    basemaps = { satellite: Esri_WorldImagery, streets: OSM, dark: CartoDark, hybrid: Esri_WorldImagery, none: null };
     map = L.map("map", { center: [30.9, 29.85], zoom: 8, zoomControl: true, worldCopyJump: true, fullscreenControl: false });
-    basemaps[activeBasemap].addTo(map);
+    if (basemaps[activeBasemap]) basemaps[activeBasemap].addTo(map);
+    else $("#map").classList.add("map-blank");   // blank basemap: classified layer only
     aoiLayer = L.layerGroup().addTo(map);
     samplesLayer = L.layerGroup().addTo(map);
     drawLayer = L.layerGroup().addTo(map);
     gtLayer = L.layerGroup();          // ground-truth reference points — toggled
     map.on("click", onMapClick);
     map.on("mousemove", function (ev) {
+      // circle tool: live radius preview after the centre was placed
+      if (state.drawing && state.drawing.mode === "circle" && state.drawing.center) {
+        var c = state.drawing.center;
+        var R = 6371000, latR = c[0] * Math.PI / 180;
+        var dy = (ev.latlng.lat - c[0]) * Math.PI / 180 * R;
+        var dx = (ev.latlng.lng - c[1]) * Math.PI / 180 * R * Math.cos(latR);
+        var km = Math.sqrt(dy * dy + dx * dx) / 1000;
+        if (state.drawing._preview) drawLayer.removeLayer(state.drawing._preview);
+        state.drawing._preview = L.circle([c[0], c[1]], {
+          radius: Math.max(50, Math.min(500000, km * 1000)),
+          color: "#151515", weight: 2, dashArray: "6 6", fillOpacity: 0.04,
+        }).addTo(drawLayer);
+      }
       var box = $("#map-coords"); if (!box) return;
       box.hidden = false;
       box.textContent = ev.latlng.lat.toFixed(5) + ", " + ev.latlng.lng.toFixed(5);
@@ -437,7 +524,8 @@
           if (isBase) map.removeLayer(l);
         });
         if (hybridLabels) map.removeLayer(hybridLabels);
-        basemaps[activeBasemap].addTo(map);
+        $("#map").classList.toggle("map-blank", activeBasemap === "none");
+        if (basemaps[activeBasemap]) basemaps[activeBasemap].addTo(map);
         if (activeBasemap === "hybrid") hybridLabels.addTo(map);
         $$("#basemap-seg button").forEach(function (x) { x.classList.toggle("is-on", x === b); });
       });
@@ -451,7 +539,7 @@
     $("#fit-btn").addEventListener("click", fitAoi);
     $("#fullscreen-btn").addEventListener("click", toggleFullscreen);
     $("#reset-aoi-btn").addEventListener("click", loadSampleAoi);
-    $("#geojson-btn").addEventListener("click", function () { $("#geojson-input").click(); });
+    // #geojson-input (the import) is now triggered from the AOI panel label
     $("#geojson-input").addEventListener("change", function () {
       if (!this.files || !this.files.length) return;
       var file = this.files[0];
@@ -469,14 +557,19 @@
     map.on("keypress", function (ev) { if (ev.originalEvent.key === "Escape") endDrawing(false); });
   }
   function toggleFullscreen() {
-    var wrap = $("#map-wrap") || $("#map").parentNode;
+    // fullscreen the WHOLE map card: the map fills 100% of the viewport and
+    // the legend stays visible underneath (CSS .ws-map:fullscreen)
+    var card = $("#view-workspace .ws-map") || $("#map-wrap") || $("#map").parentNode;
     if (!document.fullscreenElement) {
-      (wrap.requestFullscreen || wrap.webkitRequestFullscreen || function () {}).call(wrap);
+      (card.requestFullscreen || card.webkitRequestFullscreen || function () {}).call(card);
     } else {
       (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
     }
-    setTimeout(function () { if (map) map.invalidateSize(); }, 300);
   }
+  document.addEventListener("fullscreenchange", function () {
+    setTimeout(function () { if (map) map.invalidateSize(); }, 120);
+    setTimeout(function () { if (map) map.invalidateSize(); }, 450);
+  });
   function setLayerToggle(layer, on) {
     state.layers[layer] = on;
     var btn = document.querySelector('#layer-toggles button[data-layer="' + layer + '"]');
@@ -770,12 +863,16 @@
   function loadSampleAoi() {
     var ring = D.BOURJ.ring.map(function (p) { return [p[0], p[1]]; });
     var fc = { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } }] };
+    // the AOI's area is computed by the SAME geodesic formula as the engine
+    // (595.735 km² = 141,841.6 feddan) — chip, table footer and report all
+    // show one number
+    var sampleArea = G.geometryAreaM2(fc.features[0].geometry);
     var aoi = {
       kind: "sample",
       name: D.BOURJ.nameAr + " — " + D.BOURJ.name,
       fc: fc,
-      areaM2: D.BOURJ.areaM2,
-      parcels: [{ name: D.BOURJ.name, areaM2: D.BOURJ.areaM2, properties: {} }],
+      areaM2: sampleArea,
+      parcels: [{ name: D.BOURJ.name, areaM2: sampleArea, properties: {} }],
       crsLabel: "WGS84",
       warnings: []
     };
@@ -807,16 +904,30 @@
   }
 
   function startDrawing(mode) {
-    state.drawing = { mode: mode, points: [] };
+    state.drawing = { mode: mode, points: [], center: null };
     drawLayer.clearLayers();
     var wrap = $("#map");
     wrap.classList.add("crosshair");
+    syncDrawToolButtons();
     updateDrawState();
+  }
+  function endDrawingMode() {
+    state.drawing = null;
+    $("#map").classList.remove("crosshair");
+    syncDrawToolButtons();
+    updateDrawState();
+  }
+  /** highlight the toolbar draw button matching the active drawing mode */
+  function syncDrawToolButtons() {
+    $$("#draw-tools button").forEach(function (b) {
+      b.classList.toggle("is-on", !!state.drawing && state.drawing.mode === b.getAttribute("data-draw"));
+    });
   }
   function endDrawing(commit) {
     var d = state.drawing;
     state.drawing = null;
     $("#map").classList.remove("crosshair");
+    syncDrawToolButtons();
     updateDrawState();
     if (!d) return;
     if (commit && d.points.length >= 3) {
@@ -831,7 +942,14 @@
   function updateDrawState() {
     var node = $("#draw-state"); if (!node) return;
     if (!state.drawing) { node.textContent = ""; return; }
-    if (state.drawing.mode === "rect") node.textContent = t("ws.draw.hint");
+    var mode = state.drawing.mode;
+    if (mode === "circle") node.textContent = state.drawing.center
+      ? t("ws.draw.circleEdge")
+      : t("ws.draw.circleCenter");
+    else if (mode === "triangle") node.textContent = state.drawing.points.length >= 2
+      ? t("ws.draw.triangleClose")
+      : t("ws.draw.triangleHint");
+    else if (mode === "rect") node.textContent = t("ws.draw.hint");
     else node.textContent = state.drawing.points.length
       ? t("ws.draw.first")
       : t("ws.draw.hint");
@@ -845,7 +963,33 @@
       return;
     }
     var d = state.drawing;
-    if (d.mode === "poly") {
+    if (d.mode === "triangle") {
+      // three clicks: the third click closes the triangle automatically
+      d.points.push([ev.latlng.lat, ev.latlng.lng]);
+      L.circleMarker(ev.latlng, { radius: 5, color: "#151515", fillColor: "#c6f24e", fillOpacity: 1 }).addTo(drawLayer);
+      if (d.points.length >= 2) {
+        if (d._line) drawLayer.removeLayer(d._line);
+        d._line = L.polyline(d.points.map(function (p) { return [p[0], p[1]]; }), { color: "#151515", weight: 2, dashArray: "6 6" }).addTo(drawLayer);
+      }
+      if (d.points.length >= 3) { endDrawing(true); }
+      else updateDrawState();
+    } else if (d.mode === "circle") {
+      if (!d.center) {
+        d.center = [ev.latlng.lat, ev.latlng.lng];
+        L.circleMarker(ev.latlng, { radius: 5, color: "#151515", fillColor: "#c6f24e", fillOpacity: 1 }).addTo(drawLayer);
+        updateDrawState();
+      } else {
+        // second click sets the radius from the centre
+        var R = 6371000, latR = d.center[0] * Math.PI / 180;
+        var dy = (ev.latlng.lat - d.center[0]) * Math.PI / 180 * R;
+        var dx = (ev.latlng.lng - d.center[1]) * Math.PI / 180 * R * Math.cos(latR);
+        var radiusKm = Math.sqrt(dy * dy + dx * dx) / 1000;
+        if (radiusKm < 0.05) radiusKm = 0.05;
+        if (radiusKm > 500) radiusKm = 500;
+        commitCircle(d.center[1], d.center[0], radiusKm);
+      }
+    } else if (d.mode === "circle_preview") { /* handled by mousemove */ }
+    else if (d.mode === "poly") {
       d.points.push([ev.latlng.lat, ev.latlng.lng]);
       L.circleMarker(ev.latlng, { radius: 5, color: "#151515", fillColor: "#c6f24e", fillOpacity: 1 }).addTo(drawLayer);
       if (d.points.length >= 2) {
@@ -869,8 +1013,7 @@
         var area = G.geometryAreaM2(fc.features[0].geometry);
         drawLayer.clearLayers();
         setAoi({ kind: "draw", name: t("ws.aoi.kinds.draw"), fc: fc, areaM2: area, parcels: [{ name: t("ws.aoi.kinds.draw"), areaM2: area, properties: {} }], crsLabel: "WGS84", warnings: [] });
-        state.drawing = null;
-        $("#map").classList.remove("crosshair");
+        endDrawingMode();
       }
     }
   }
@@ -890,6 +1033,13 @@
     return ring;
   }
 
+  function commitCircle(lon, lat, radiusKm) {
+    var ring = circleRing(lon, lat, radiusKm);
+    var fc = { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: { type: "Polygon", coordinates: [ring] } }] };
+    var area = G.geometryAreaM2(fc.features[0].geometry);
+    setAoi({ kind: "circle", name: t("ws.aoi.kinds.circle"), fc: fc, areaM2: area, parcels: [{ name: t("ws.aoi.kinds.circle"), areaM2: area, properties: {} }], crsLabel: "WGS84", warnings: [] });
+    endDrawingMode();
+  }
   function applyCircle() {
     var lon = parseFloat($("#circle-lon").value), lat = parseFloat($("#circle-lat").value), r = parseFloat($("#circle-radius").value);
     if (!isFinite(lon) || !isFinite(lat) || !isFinite(r) || lon < -180 || lon > 180 || lat < -90 || lat > 90) { toast(t("ws.invalidCoords"), true); return; }
@@ -962,14 +1112,33 @@
     }
     yearSel.value = String(state.year);
 
-    // custom range
+    // custom range: the From/To fields always carry the ACTIVE preset's dates —
+    // switching to "custom detection" starts from exactly what is on screen,
+    // and a stale reversed pair can never survive a reload
     var cf = $("#custom-from"), ct = $("#custom-to");
     if (cf && !cf._wired) {
       cf._wired = ct._wired = true;
-      cf.addEventListener("change", function () { state.customFrom = cf.value || null; });
-      ct.addEventListener("change", function () { state.customTo = ct.value || null; });
+      cf.addEventListener("change", function () {
+        state.customFrom = cf.value || null;
+        syncCustomOrder();
+      });
+      ct.addEventListener("change", function () {
+        state.customTo = ct.value || null;
+        syncCustomOrder();
+      });
     }
-    if (cf) { cf.value = state.customFrom || ""; ct.value = state.customTo || ""; }
+    if (cf) {
+      var perNow = currentPeriod();
+      if (state.season !== "custom" || !state.customFrom || !state.customTo) {
+        state.customFrom = perNow.dateFrom;
+        state.customTo = perNow.dateTo;
+      }
+      if (state.customFrom && state.customTo && state.customFrom > state.customTo) {
+        var swap = state.customFrom; state.customFrom = state.customTo; state.customTo = swap;
+      }
+      cf.value = state.customFrom || "";
+      ct.value = state.customTo || "";
+    }
     var clearBtn = $("#custom-clear");
     if (clearBtn) clearBtn.hidden = state.season !== "custom";
 
@@ -991,6 +1160,18 @@
     renderResults();
   }
 
+  /** enforce From < To on the custom inputs: an inverted pair is swapped back
+   *  into order immediately (and re-synced to the fields) */
+  function syncCustomOrder() {
+    var cf = $("#custom-from"), ct = $("#custom-to");
+    if (!cf || !ct) return;
+    var from = cf.value, to = ct.value;
+    if (from && to && from >= to) {
+      cf.value = to; ct.value = from;
+      state.customFrom = to; state.customTo = from;
+      toast(t("errors.bad_date_range"), true);
+    }
+  }
   function updateSeasonInfo() {
     var per = currentPeriod();
     $("#season-period").textContent = state.season === "custom"
@@ -1325,25 +1506,42 @@
   function isLive() { return !!backendUrl() || state.gee.live; }
   function liveUrl() { return backendUrl() || (state.gee.live ? state.gee.url : null); }
 
-  /** Ask the server whether a real Earth Engine key is configured. Never rejects. */
+  /** ONE authoritative health check at boot; its verdict propagates to the
+   *  badge, the banner, the run labels and the saved history. Only the SERVER
+   *  saying "no key" (demo / engine_error) is treated as preview mode — a
+   *  network failure is "checking", never a false preview banner; and a
+   *  successful live run reconciles the state (markGeeLive). */
   function geeProbe() {
     if (!(S && S.geeHealth)) { state.gee.checked = true; renderGeeBadge(); return Promise.resolve(false); }
     return S.geeHealth().then(function (h) {
       state.gee.checked = true;
-      state.gee.live = h && h.mode === "live";
+      state.gee.live = !!(h && h.mode === "live");
+      state.gee.demoConfirmed = !!(h && (h.mode === "demo" || h.mode === "engine_error"));
+      state.gee.unsure = !!(h && (h.mode === "unreachable" || h.mode === "error"));
       state.gee.url = S.apiBase() + "/api/gee/run";
       renderGeeBadge();
       return state.gee.live;
     }, function () {
-      state.gee.checked = true; state.gee.live = false; renderGeeBadge();
+      state.gee.checked = true; state.gee.live = false; state.gee.unsure = true; renderGeeBadge();
       return false;
     });
+  }
+  /** A live run completing is the strongest possible evidence that Earth
+   *  Engine is configured — if the boot health probe had failed (timeout on a
+   *  cold auth), reconcile every mode indicator instead of showing a preview
+   *  banner over live results. */
+  function markGeeLive() {
+    if (state.gee.live) return;
+    state.gee.live = true;
+    state.gee.checked = true;
+    renderGeeBadge();
   }
   function renderGeeBadge() {
     var b = $("#gee-badge");
     if (b) {
       if (!state.gee.checked && !backendUrl()) { b.textContent = t("ws.gee.checking"); b.className = "chip"; }
       else if (isLive()) { b.textContent = t("ws.gee.live"); b.className = "chip is-live"; }
+      else if (state.gee.unsure && state.gee.checked) { b.textContent = t("ws.gee.unsure"); b.className = "chip"; }
       else { b.textContent = t("ws.gee.preview"); b.className = "chip"; }
     }
     var lb = $("#league-btn"); if (lb) lb.hidden = !isLive();
@@ -1396,6 +1594,9 @@
         support: c.support || 0
       };
     });
+    if (jr.confusion && jr.confusion.rows && jr.confusion.total == null) {
+      jr.confusion.total = jr.confusion.rows.reduce(function (s2, row) { return s2 + row.reduce(function (s3, v) { return s3 + v; }, 0); }, 0);
+    }
     var algo = (input && input.algorithm) || jr.algorithm;
     var noteCodes = (jr.notes && jr.notes.length ? jr.notes.slice() : (jr.noteCode ? [jr.noteCode] : [])).slice();
     // honest insight: weak measured accuracy at the crop level
@@ -1417,9 +1618,12 @@
       kappa: typeof jr.kappa === "number" ? jr.kappa : null,
       classes: classes,
       confusion: jr.confusion || null,
+      nValPoints: jr.nValPoints != null ? jr.nValPoints : null,
       nImages: jr.nImages != null ? jr.nImages : null,
       nTrain: jr.nTrain != null ? jr.nTrain : null,
       nVal: jr.nVal != null ? jr.nVal : null,
+      downloadScaleM: jr.downloadScaleM != null ? jr.downloadScaleM : null,
+      cached: jr.cached === true,
       sampleSource: jr.sampleSource || null,
       sampleClassCounts: jr.sampleClassCounts || null,
       nReferencePoints: jr.nReferencePoints != null ? jr.nReferencePoints : null,
@@ -1430,8 +1634,9 @@
     };
   }
 
-  function runLive(input) {
+  function runLive(input, fresh) {
     var body = JSON.parse(JSON.stringify(input)); // drop marker functions, if any
+    if (fresh) body.fresh = true;                  // bypass the server result cache
     return liveFetch(liveUrl(), body, 330000).then(function (jr) {
       var res = normalizeLiveResult(jr, input);
       if (!res.tileUrl) throw { code: "BACKEND_BAD" };
@@ -1440,7 +1645,60 @@
   }
 
   // ---------------------------------------------------------------- run + results
-  function runPreview(algorithmKey) {
+  /* Client-side run cache: a completed live run is kept keyed by the full
+   * input signature, so switching back to an already-computed algorithm,
+   * preset or level renders in <200 ms (plus the server-side cache behind
+   * /api/gee/run for other devices / cold starts). "Re-run fresh" bypasses
+   * both. Entries also come from the saved run history (Neon) at login. */
+  var runCache = new Map();       // key → normalized result
+  var runCacheKey = function (input) {
+    var parts = [
+      input.scheme, input.algorithm, input.season,
+      input.season === "custom" ? (input.dateFrom + ".." + input.dateTo) : String(input.year || ""),
+      JSON.stringify(input.params || {}),
+      String(input.cloudMax != null ? input.cloudMax : ""),
+      (input.samplePoints || []).map(function (p) { return p.classId + "," + (+p.lon).toFixed(5) + "," + (+p.lat).toFixed(5); }).sort().join(";"),
+      JSON.stringify(input.aoiGeo ? { t: input.aoiGeo.type, n: (input.aoiGeo.coordinates || []).length } : "borj") + "|" + aoiHash(input.aoiGeo),
+    ];
+    return parts.join("|");
+  };
+  function aoiHash(aoiGeo) {
+    if (!aoiGeo) return "borj";
+    var str = JSON.stringify(aoiGeo);
+    var h = 0;
+    for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
+    return (h >>> 0).toString(36);
+  }
+
+  /* live-run stage progress: data-driven — the bar advances over the elapsed
+   * share of the LAST live run's measured duration (localStorage), cycling
+   * the three stage labels; rAF only, no blocking renders. */
+  var progressTimer = null;
+  function showRunProgress() {
+    var box = $("#run-progress"), label = $("#run-progress-label");
+    if (!box || !label) return;
+    var expected = 15000;
+    try { expected = Math.max(6000, +localStorage.getItem("dv_last_live_ms") || 15000); } catch (e) { /* keep default */ }
+    var t0 = Date.now();
+    var bar = box.querySelector(".run-progress-bar i");
+    box.hidden = false;
+    if (progressTimer) cancelAnimationFrame(progressTimer);
+    var tick = function () {
+      var pct = Math.min(96, (Date.now() - t0) / expected * 100);
+      if (bar) bar.style.width = pct + "%";
+      label.textContent = t(pct < 34 ? "ws.results.stageFetch" : pct < 72 ? "ws.results.stageTrain" : "ws.results.stageRender");
+      progressTimer = requestAnimationFrame(tick);
+    };
+    tick();
+  }
+  function hideRunProgress() {
+    var box = $("#run-progress");
+    if (box) box.hidden = true;
+    if (progressTimer) { cancelAnimationFrame(progressTimer); progressTimer = null; }
+  }
+
+  function runPreview(algorithmKey, opts) {
+    opts = opts || {};
     if (!state.aoi) { toast(t("ws.needAoi"), true); return; }
     var algo = I.algorithmByKey(algorithmKey || state.algorithm);
     var btn = $("#run-btn");
@@ -1459,20 +1717,37 @@
       aoiGeo: state.aoi.fc,
       aoiName: state.aoi.name
     };
+    var cacheKey = runCacheKey(input);
     btn.disabled = true; btn.textContent = t("ws.running");
-    var done = function () { btn.disabled = false; btn.textContent = t("ws.run"); };
-    var finish = function (res) {
+    var done = function () { btn.disabled = false; btn.textContent = t("ws.run"); hideRunProgress(); };
+    var finish = function (res, fromCache) {
       state.results = res;
       state.results.algorithm = algo.key;
       state.resultsParams = { params: pickParams(algo), cloudMax: state.params.cloudMax };
+      if (fromCache) res.fromCache = true; else res.fromCache = false;
+      if (!fromCache && res.mode === "live" && res.durationMs) {
+        try { localStorage.setItem("dv_last_live_ms", String(res.durationMs)); } catch (e) { /* ignore */ }
+      }
+      recordCompare(res);            // the compare table shows every measured run
+      if (res.mode === "live") markGeeLive();  // one source of truth: a live run means live mode
       showOverlay();
       renderResults();
       renderLegend();
-      saveRunSnapshot(input, res);   // server history (no-op when offline / not signed in via server)
+      if (!fromCache) {
+        runCache.set(cacheKey, res);  // instant on the way back
+        if (runCache.size > 24) runCache.delete(runCache.keys().next().value);
+        saveRunSnapshot(input, res);  // server history (no-op when offline / not signed in via server)
+      }
       done();
     };
     if (isLive()) {
-      runLive(input).then(finish, function (err) {
+      // cached result for this exact input → instant, with a fresh re-run chip
+      if (!opts.fresh) {
+        var cached = runCache.get(cacheKey);
+        if (cached) { finish(cached, true); return; }
+      }
+      showRunProgress();
+      runLive(input, opts.fresh).then(function (res) { finish(res, false); }, function (err) {
         toast(errorText(err), true);
         state.results = null;
         renderResults();
@@ -1480,7 +1755,7 @@
       });
     } else {
       setTimeout(function () {
-        try { finish(DVBackend.run(input)); }
+        try { finish(DVBackend.run(input), false); }
         catch (err) {
           toast(errorText(err), true);
           state.results = null;
@@ -1500,7 +1775,8 @@
     if (!state.results) return;
     if (state.results.tileUrl) {
       // live Earth Engine run: XYZ tile overlay under the AOI outline
-      overlayLayer = L.tileLayer(state.results.tileUrl, { opacity: parseFloat($("#overlay-opacity").value), maxNativeZoom: 17, zIndex: 400 });
+      overlayLayer = L.tileLayer(state.results.tileUrl, geeTileOpts({ opacity: parseFloat($("#overlay-opacity").value), zIndex: 400 }));
+      attachTileRetry(overlayLayer);
     } else if (state.results.previewImage) {
       var b = state.results.grid.bounds;
       overlayLayer = L.imageOverlay(state.results.previewImage, [[b[1], b[0]], [b[3], b[2]]], { opacity: parseFloat($("#overlay-opacity").value), interactive: false, zIndex: 400 });
@@ -1529,7 +1805,8 @@
     }, 130000).then(function (j) {
       if (!j || !j.tileUrl) throw { code: "scene_failed" };
       if (sceneLayer) map.removeLayer(sceneLayer);
-      sceneLayer = L.tileLayer(j.tileUrl, { opacity: 0.9, maxNativeZoom: 17, zIndex: 300 });
+      sceneLayer = L.tileLayer(j.tileUrl, geeTileOpts({ opacity: 0.9, zIndex: 300 }));
+      attachTileRetry(sceneLayer);
       sceneLayer.addTo(map);
     }, function (err) {
       sceneActive = null;
@@ -1680,15 +1957,26 @@
     var levelName = r.scheme === "crops" ? t("ws.level.crops") : t("ws.level.general");
     $("#results-run").textContent = t("ws.results.run", { algo: algoName, season: seasonName, period: r.dateFrom + " → " + r.dateTo })
       + " · " + t("ws.results.level", { level: r.scheme === "crops" ? "2" : "1", name: levelName });
+    // cached render → a subtle chip to recompute from scratch
+    var oldChip = document.getElementById("rerun-chip"); if (oldChip) oldChip.remove();
+    if (r.fromCache) {
+      var chip = el("button", "rerun-chip");
+      chip.type = "button";
+      chip.id = "rerun-chip";
+      chip.textContent = "↻ " + t("ws.results.rerun");
+      chip.title = t("ws.results.fromCache");
+      chip.addEventListener("click", function () { runPreview(r.algorithm, { fresh: true }); });
+      var runLine = $("#results-run");
+      if (runLine && runLine.parentNode) runLine.parentNode.insertBefore(chip, runLine.nextSibling);
+    }
     renderTrainingSetLine(r);
 
-    // stat cards
+    // stat cards — ONE source of truth for the total: the live run's geodesic
+    // AOI area (the class table sums to exactly it), never a second formula
     var row = $("#stat-row"); row.innerHTML = "";
-    var totalM2 = state.aoi.areaM2;
-    var liveTotal = 0;
-    if (r.mode === "live") r.classes.forEach(function (c) { liveTotal += c.areaM2 || 0; });
-    statCard(row, feddan(r.mode === "live" && liveTotal > 0 ? liveTotal : totalM2) + " ", t("ws.results.total"), t("units.feddan"));
-    statCard(row, fmt(G.m2ToKm2(r.mode === "live" && liveTotal > 0 ? liveTotal : totalM2)) + " ", t("units.km2"), "");
+    var totalM2 = totalAreaM2(r);
+    statCard(row, feddan(totalM2) + " ", t("ws.results.total"), t("units.feddan"));
+    statCard(row, fmt(G.m2ToKm2(totalM2)) + " ", t("units.km2"), "");
     statCard(row, fmt(state.aoi.parcels ? state.aoi.parcels.length : 0, 0) + " ", t("ws.results.parcels"), "");
     var acard = el("div", "stat-card");
     if (r.mode === "live" && typeof r.oa === "number" && typeof r.kappa === "number") {
@@ -1816,6 +2104,8 @@
       tbody.appendChild(tr);
     });
     tbl.appendChild(tbody);
+    var cap = $("#confusion-caption");
+    if (cap) cap.textContent = confusionCaptionText(r);
   }
 
   /** Yield & water decision support: Egyptian indicative figures per feddan. */
@@ -1885,12 +2175,11 @@
       }
     }
     if (actions && r.downloadUrl) {
-      var a = el("a", "btn btn-ghost btn-sm", t("ws.results.download"));
-      a.id = "geotiff-btn";
-      a.href = r.downloadUrl;
-      a.target = "_blank";
-      a.rel = "noopener";
-      actions.appendChild(a);
+      var dl = el("button", "btn btn-ghost btn-sm", t("ws.results.download") + (r.downloadScaleM ? " · " + r.downloadScaleM + " m" : ""));
+      dl.type = "button";
+      dl.id = "geotiff-btn";
+      dl.addEventListener("click", exportGeotiff);
+      actions.appendChild(dl);
     }
   }
 
@@ -2040,6 +2329,317 @@
     box.appendChild(svg);
   }
 
+  // ---------------------------------------------------------------- map exports
+  /* Full-frame classified PNG: stitch the run's Earth Engine tiles at the
+   * highest native zoom (z14 ≈ 10 m/px; z15+ only upscales), composite over a
+   * white canvas with the title, the ACTIVE seasonal legend and a caption
+   * (OA, kappa, period, study area) — client-side, so Arabic RTL and English
+   * both render with the page fonts and no serverless timeout can hit. */
+  function ll2tile(lon, lat, z) {
+    var n = Math.pow(2, z);
+    var x = ((lon + 180) / 360) * n;
+    var latR = lat * Math.PI / 180;
+    var y = (1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2 * n;
+    return [x, y];   // fractional tile coords
+  }
+  function exportPng() {
+    var r = state.results;
+    if (!r) { toast(t("ws.results.empty"), true); return; }
+    if (!r.tileUrl && !r.previewImage) { toast(t("ws.results.pngNoTiles"), true); return; }
+    toast(t("ws.results.pngStitching"));
+    buildClassifiedCanvas(r).then(function (work) {
+      return (document.fonts && document.fonts.ready ? document.fonts.ready.then(function () { return work; }) : Promise.resolve(work));
+    }).then(function (work) {
+      var out = buildComposedCanvas(work, r);
+      out.toBlob(function (blob) {
+        if (!blob) { toast(t("ws.results.pngFailed", { err: "toBlob" }), true); return; }
+        downloadBlob("delta_vision_map_" + stamp() + ".png", blob, "image/png");
+        toast(t("common.download") + " · PNG " + out.width + "×" + out.height + " px");
+      }, "image/png");
+    }, function (err) {
+      toast(t("ws.results.pngFailed", { err: (err && err.code) || err }), true);
+    });
+  }
+  function canvasFont() {
+    return '"Tajawal", "Segoe UI", system-ui, sans-serif';
+  }
+  /** the publication composite: classified raster + title + ACTIVE legend +
+   *  caption (OA, kappa, period, study area) — RTL for Arabic, LTR otherwise */
+  function buildComposedCanvas(work, r) {
+    var img = work.img, W = work.w, H = work.h;
+    var isAr = state.lang === "ar";
+    var pad = Math.round(W * 0.024) + 10;
+    var titleSize = Math.max(22, Math.round(W * 0.026));
+    var capSize = Math.max(14, Math.round(W * 0.016));
+    var legSize = Math.max(15, Math.round(W * 0.018));
+    var bands = Math.round(titleSize * 1.8) + pad;
+    var legendRows = Math.ceil(r.classes.length / 4);
+    var legendH = legendRows * Math.round(legSize * 2.1) + Math.round(pad * 0.7);
+    var capH = Math.round(capSize * 2.4);
+    var out = document.createElement("canvas");
+    out.width = W;
+    out.height = bands + H + legendH + capH;
+    var c2 = out.getContext("2d");
+    c2.fillStyle = "#ffffff";
+    c2.fillRect(0, 0, out.width, out.height);
+    c2.drawImage(img, 0, bands, W, H);
+    c2.textBaseline = "alphabetic";
+    c2.direction = isAr ? "rtl" : "ltr";
+    // title: level · season · period · algorithm
+    var levelName = r.scheme === "crops" ? t("ws.level.crops") : t("ws.level.general");
+    var seasonName = t("ws.season." + (r.season || "winter"));
+    var algoName = t("algo.names." + r.algorithm);
+    var title = r.season === "custom"
+      ? levelName + " · " + (r.dateFrom || "") + "→" + (r.dateTo || "") + " · " + algoName
+      : levelName + " · " + seasonName + " · " + (r.dateFrom || "") + "→" + (r.dateTo || "") + " · " + algoName;
+    c2.textAlign = isAr ? "right" : "left";
+    c2.fillStyle = "#151515";
+    c2.font = "700 " + titleSize + "px " + canvasFont();
+    c2.fillText(title, isAr ? out.width - pad : pad, Math.round(titleSize * 1.35));
+    // active seasonal legend: colour + class name (+ share), 4 per row, RTL order
+    var colW = out.width / 4;
+    r.classes.forEach(function (cl, i) {
+      var row = Math.floor(i / 4), col = i % 4;
+      var order = isAr ? 3 - col : col;
+      var x = order * colW + (isAr ? -pad * 0.6 : pad * 0.6);
+      var y = bands + H + Math.round(legSize * (1.35 + row * 2.1));
+      c2.fillStyle = cl.color;
+      var sw = Math.round(legSize * 1.1);
+      c2.fillRect(isAr ? x - sw : x, y - sw, sw, sw);
+      c2.fillStyle = "#333";
+      c2.font = "600 " + legSize + "px " + canvasFont();
+      c2.textAlign = isAr ? "right" : "left";
+      c2.fillText(cl.name + (cl.percent != null ? " · " + fmt(cl.percent, 1) + "%" : ""), isAr ? x - sw - 8 : x + sw + 8, y);
+    });
+    // caption
+    var bits = [];
+    if (r.oa != null && r.kappa != null) bits.push("OA " + fmt(r.oa * 100, 1) + "% · kappa " + fmt(r.kappa, 3));
+    bits.push((r.dateFrom || "") + " → " + (r.dateTo || ""));
+    if (state.aoi && state.aoi.name) bits.push(state.aoi.name);
+    bits.push("Delta Vision · Sentinel-2");
+    c2.font = "500 " + capSize + "px " + canvasFont();
+    c2.fillStyle = "#555";
+    c2.fillText(bits.filter(Boolean).join("  ·  "), isAr ? out.width - pad : pad, out.height - Math.round(capSize * 0.9));
+    return out;
+  }
+  /** ONE source of truth for the total area: the live run's geodesic AOI area
+   *  (server-computed, identical to the rescaled class sum); preview falls
+   *  back to the client geometry area */
+  function totalAreaM2(r) {
+    if (r && r.mode === "live" && r.areaKm2 != null && r.areaKm2 > 0) return r.areaKm2 * 1e6;
+    return state.aoi ? state.aoi.areaM2 : 0;
+  }
+  /** the confusion-matrix caption: pixel total + withheld test points */
+  function confusionCaptionText(r) {
+    var cm = r && r.confusion;
+    if (!cm) return "";
+    var total = cm.total;
+    if (total == null) total = cm.rows.reduce(function (s, row) { return s + row.reduce(function (s2, v) { return s2 + v; }, 0); }, 0);
+    var pts = cm.nValPoints != null ? cm.nValPoints : (r.nValPoints != null ? r.nValPoints : r.nVal);
+    return pts ? t("ws.results.confusionCaption", { pixels: fmt(total, 0), points: fmt(pts, 0) })
+               : t("ws.results.confusionNoPoints", { pixels: fmt(total, 0) });
+  }
+  /** the classified raster on a canvas: live runs stitch EE tiles at z14
+   *  (≥2000 px on the long side for Borj-sized AOIs; small AOIs step up the
+   *  zoom until the long side reaches 2000 px), preview runs draw the
+   *  preview image directly. */
+  function buildClassifiedCanvas(r) {
+    if (!r.tileUrl) {           // preview mode: the already-rendered dataURL
+      return new Promise(function (resolve, reject) {
+        var img = new Image();
+        img.onload = function () { resolve({ img: img, w: img.width, h: img.height, ctx: null }); };
+        img.onerror = function () { reject({ code: "preview_image" }); };
+        img.src = r.previewImage;
+      });
+    }
+    var b = G.collectionBbox(state.aoi.fc);
+    var z = 14;
+    var grid = tileGridFor(b, z);
+    while (Math.max(grid.nx, grid.ny) * 256 < 2000 && z < 18) { z++; grid = tileGridFor(b, z); }
+    while (grid.nx * grid.ny > 400 && z > 11) { z--; grid = tileGridFor(b, z); }
+    var total = grid.nx * grid.ny;
+    toast(t("ws.results.pngTiles", { n: total }));
+    var tiles = new Array(total);
+    var idx = 0, done = 0, failures = 0;
+    return new Promise(function (resolve, reject) {
+      var next = function () {
+        while (idx < total && tiles.filter(function (x) { return x === undefined; }).length < 12) {
+          (function (i) {
+            tiles[i] = null; // in-flight marker
+            var url = r.tileUrl.replace("{z}", z).replace("{x}", String(grid.x0 + (i % grid.nx))).replace("{y}", String(grid.y0 + Math.floor(i / grid.nx)));
+            loadTile(url, 2).then(function (img) {
+              tiles[i] = img; done++;
+              if (done === total) finish();
+              else next();
+            }, function () {
+              tiles[i] = null; done++; failures++;
+              if (done === total) finish();
+              else next();
+            });
+          })(idx++);
+        }
+      };
+      var finish = function () {
+        if (failures > total * 0.25) { reject({ code: "tile_errors" }); return; }
+        var W = grid.nx * 256, H = grid.ny * 256;
+        var cv = document.createElement("canvas");
+        cv.width = W; cv.height = H;
+        var ctx = cv.getContext("2d");
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, W, H);
+        tiles.forEach(function (img, i) {
+          if (img) ctx.drawImage(img, (i % grid.nx) * 256, Math.floor(i / grid.nx) * 256, 256, 256);
+        });
+        var out = new Image();
+        out.onload = function () { resolve({ img: out, w: W, h: H, ctx: ctx }); };
+        out.onerror = function () { reject({ code: "compose" }); };
+        out.src = cv.toDataURL("image/png");
+      };
+      next();
+    });
+  }
+  function tileGridFor(bbox, z) {
+    var tl = ll2tile(bbox[0], bbox[3], z);   // [x, y] top-left (lon, maxLat)
+    var br = ll2tile(bbox[2], bbox[1], z);
+    var x0 = Math.floor(tl[0]), x1 = Math.floor(br[0]);
+    var y0 = Math.floor(tl[1]), y1 = Math.floor(br[1]);
+    return { x0: x0, y0: y0, nx: x1 - x0 + 1, ny: y1 - y0 + 1 };
+  }
+  function loadTile(url, retries) {
+    return fetch(url, { mode: "cors" }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.blob();
+    }).then(function (blob) {
+      return createImageBitmap(blob);
+    }).catch(function (e) {
+      if (retries > 0) return new Promise(function (r) { setTimeout(r, 700); }).then(function () { return loadTile(url, retries - 1); });
+      throw e;
+    });
+  }
+  function downloadBlob(name, blob, mime) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () { URL.revokeObjectURL(a.href); a.remove(); }, 600);
+  }
+  function fmtBytes(n) {
+    if (n > 1048576) return (n / 1048576).toFixed(1) + " MB";
+    if (n > 1024) return Math.round(n / 1024) + " KB";
+    return n + " B";
+  }
+
+  /* GeoTIFF: fetch the URL as a blob (EE serves CORS headers) so the browser
+   * download carries the real file size, reported in the toast together with
+   * the export scale. */
+  function exportGeotiff() {
+    var r = state.results;
+    if (!r || !r.downloadUrl) { toast(t("ws.results.pngNoTiles"), true); return; }
+    fetch(r.downloadUrl, { mode: "cors" }).then(function (res) {
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.blob();
+    }).then(function (blob) {
+      downloadBlob("delta_vision_" + (r.scheme === "crops" ? "crops" : "landcover") + "_" + r.algorithm + "_" + stamp() + ".tif", blob, "image/tiff");
+      toast(t("ws.results.tifOk", { size: fmtBytes(blob.size), scale: r.downloadScaleM || 30 }));
+    }).catch(function (e) {
+      // CORS or a stale token: fall back to a plain navigation download
+      var a = document.createElement("a");
+      a.href = r.downloadUrl;
+      a.target = "_blank";
+      a.rel = "noopener";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      toast(t("ws.results.tifOk", { size: "—", scale: r.downloadScaleM || 30 }));
+    });
+  }
+
+  /* GeoJSON export of the ACTIVE AOI with properties (name, areas, level). */
+  function exportGeojson() {
+    if (!state.aoi || !state.aoi.fc || !state.aoi.fc.features.length) { toast(t("ws.results.geojsonEmpty"), true); return; }
+    var r = state.results;
+    var fc = {
+      type: "FeatureCollection",
+      features: state.aoi.fc.features.map(function (f, i) {
+        var props = Object.assign({}, f.properties || {});
+        props.name = props.name || props.NAME || (state.aoi.name || "AOI") + " #" + (i + 1);
+        props.area_feddan = +feddan(G.geometryAreaM2(f.geometry)).replace(/,/g, "");
+        props.area_km2 = +G.m2ToKm2(G.geometryAreaM2(f.geometry)).toFixed(3);
+        props.dv_study_area = state.aoi.name || "";
+        if (r) {
+          props.dv_level = r.scheme === "crops" ? 2 : 1;
+          props.dv_algorithm = r.algorithm || "";
+          props.dv_period = (r.dateFrom || "") + ".." + (r.dateTo || "");
+        }
+        return { type: "Feature", properties: props, geometry: f.geometry };
+      })
+    };
+    var blob = new Blob([JSON.stringify(fc)], { type: "application/geo+json" });
+    downloadBlob("delta_vision_aoi_" + stamp() + ".geojson", blob, "application/geo+json");
+    var total = feddan(state.aoi.areaM2);
+    toast(t("ws.results.geojsonOk", { n: fc.features.length, area: total }));
+  }
+
+  /* Print report: a dedicated print window with the full-frame classified
+   * PNG, the class-area table and the confusion matrix — real Save-as-PDF
+   * output instead of printing the whole app shell. */
+  function printReport() {
+    var r = state.results;
+    if (!r) { toast(t("ws.results.empty"), true); return; }
+    buildClassifiedCanvas(r).then(function (work) {
+      var isAr = state.lang === "ar";
+      var png = composeExportCanvas(work, r);       // same composite as the PNG export
+      var dataUrl = png.toDataURL("image/png");
+      var levelName = r.scheme === "crops" ? t("ws.level.crops") : t("ws.level.general");
+      var rows = r.classes.map(function (c) {
+        return "<tr><td>" + esc(c.name) + "</td><td class='n'>" + feddan(c.areaM2) + "</td><td class='n'>" + fmt(G.m2ToKm2(c.areaM2)) + "</td><td class='n'>" + fmt(c.percent, 1) + "%</td>"
+          + (c.pa != null ? "<td class='n'>" + fmt(c.pa * 100, 1) + "%</td><td class='n'>" + fmt(c.ua * 100, 1) + "%</td><td class='n'>" + fmt(c.f1, 3) + "</td>" : "") + "</tr>";
+      }).join("");
+      var cmHtml = "";
+      if (r.confusion && r.confusion.classIds && r.confusion.classIds.length > 1) {
+        var names = r.confusion.classIds.map(function (id) { var c = classById(id, r.scheme); return c ? esc(className(c)) : String(id); });
+        cmHtml = "<h2>" + esc(t("ws.results.confusionTitle")) + "</h2><table class='cm'>"
+          + "<tr><th></th>" + names.map(function (n) { return "<th>" + n + "</th>"; }).join("") + "</tr>"
+          + r.confusion.rows.map(function (row, i) {
+            return "<tr><th>" + names[i] + "</th>" + row.map(function (v, j) { return "<td" + (i === j ? " class='d'" : "") + ">" + v + "</td>"; }).join("") + "</tr>";
+          }).join("") + "</table>"
+          + "<p class='cap'>" + esc(confusionCaptionText(r)) + "</p>";
+      }
+      var acc = r.oa != null ? "<b>OA " + fmt(r.oa * 100, 1) + "%</b> · kappa " + fmt(r.kappa, 3) : "";
+      var html = "<!doctype html><html lang='" + state.lang + "' dir='" + (isAr ? "rtl" : "ltr") + "'><head><meta charset='utf-8'>"
+        + "<title>" + esc(t("ws.results.printTitle")) + "</title><style>"
+        + "body{font-family:" + (isAr ? "'Tajawal','Segoe UI'" : "'Segoe UI'") + ",system-ui,sans-serif;margin:0;color:#151515;background:#fff}"
+        + "header{padding:14px 18px;border-bottom:2px solid #151515}header h1{margin:0;font-size:20px}header p{margin:4px 0 0;color:#555;font-size:12px}"
+        + "img.map{width:100%;display:block;margin:12px 0}table{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0 18px}"
+        + "th,td{border:1px solid #ccc;padding:5px 8px;text-align:start}td.n,th.n{text-align:end}tr td:last-child, table.cm td{text-align:center}"
+        + "table.cm th{background:#f2f2f2}table.cm td.d{background:#e5f2d8;font-weight:600}"
+        + "h2{font-size:15px;margin:18px 0 6px}p.cap{color:#555;font-size:11px}footer{padding:10px 18px;border-top:1px solid #ccc;color:#777;font-size:11px}"
+        + "@media print{header{padding:8px 10px}img.map{margin:6px 0}}"
+        + "</style></head><body>"
+        + "<header><h1>" + esc(t("ws.results.printTitle")) + "</h1><p>" + esc(levelName + " · " + t("ws.season." + (r.season || "winter")) + " · " + (r.dateFrom || "") + " → " + (r.dateTo || "")) + " · " + esc(state.aoi ? state.aoi.name : "") + " · " + acc + "</p></header>"
+        + "<img class='map' src='" + dataUrl + "' alt=''>"
+        + "<h2>" + esc(t("ws.results.tableTitle")) + "</h2><table><tr><th>" + esc(t("ws.results.class")) + "</th><th class='n'>" + esc(t("units.feddan")) + "</th><th class='n'>km²</th><th class='n'>%</th>"
+        + (r.classes.some(function (c) { return c.pa != null; }) ? "<th class='n'>PA</th><th class='n'>UA</th><th class='n'>F1</th>" : "") + "</tr>" + rows
+        + "<tr><th>" + esc(t("ws.results.total")) + "</th><th class='n'>" + feddan(totalAreaM2(r)) + "</th><th class='n'>" + fmt(G.m2ToKm2(totalAreaM2(r))) + "</th><th class='n'>100%</th></tr></table>"
+        + cmHtml
+        + "<footer>" + esc(t("ws.results.printIntro")) + " · " + esc(t("report.disclaimer")) + "</footer>"
+        + "</body></html>";
+      var w = window.open("", "_blank");
+      if (!w) { toast(t("errors.popup_blocked"), true); return; }
+      w.document.write(html);
+      w.document.close();
+      var fire = function () { setTimeout(function () { try { w.focus(); w.print(); } catch (e) { /* the user can print manually */ } }, 250); };
+      if (w.document.readyState === "complete") fire();
+      else w.onload = fire;
+    }, function (err) {
+      toast(t("ws.results.pngFailed", { err: (err && err.code) || err }), true);
+    });
+  }
+  /** the composite canvas (image + title + legend + caption) shared by the
+   *  PNG export and the print report */
+  function composeExportCanvas(work, r) { return buildComposedCanvas(work, r); }
+
   // ---------------------------------------------------------------- CSV exports
   function csvCell(v) { v = String(v == null ? "" : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
   function downloadText(name, text, mime) {
@@ -2116,6 +2716,18 @@
   }
 
   // ---------------------------------------------------------------- compare dialog
+  /* every completed run's measured accuracy, keyed by level × season family —
+   * the compare dialog shows these immediately instead of "not computed" */
+  var compareMetrics = {};        // "scheme|family" → { algoKey: {oa, kappa} }
+  function recordCompare(res) {
+    if (!res || res.mode !== "live" || res.oa == null) return;
+    var key = (res.scheme || "general") + "|" + (res.family || currentFamily());
+    (compareMetrics[key] = compareMetrics[key] || {})[res.algorithm] = { oa: res.oa, kappa: res.kappa };
+  }
+  function compareCell(algo) {
+    var m = (compareMetrics[(currentScheme()) + "|" + (currentFamily())] || {})[algo];
+    return m ? t("ws.compare.computed", { oa: (m.oa * 100).toFixed(1), k: m.kappa.toFixed(3) }) : null;
+  }
   function initCompare() {
     var dlg = $("#compare-dialog");
     if (!dlg.showModal) { dlg.hidden = true; return; }
@@ -2136,8 +2748,19 @@
       algorithm: r.algorithm, season: r.season, dateFrom: r.dateFrom, dateTo: r.dateTo,
       mode: r.mode || "preview", oa: r.oa != null ? r.oa : null, kappa: r.kappa != null ? r.kappa : null,
       isKmeans: !!r.isKmeans, nImages: r.nImages || null, nTrain: r.nTrain || null, nVal: r.nVal || null,
+      nValPoints: r.nValPoints != null ? r.nValPoints : null,
       sampleSource: r.sampleSource || null, durationMs: r.durationMs || null,
-      classes: r.classes.map(function (c) { return { classId: c.classId, percent: c.percent, areaM2: c.areaM2 }; })
+      scheme: r.scheme || null, family: r.family || null,
+      activeClassIds: r.activeClassIds || null, excludedClassIds: r.excludedClassIds || [],
+      noteCodes: (r.noteCodes || []).slice(),
+      areaKm2: r.areaKm2 != null ? r.areaKm2 : null,
+      tileUrl: r.tileUrl || null,
+      downloadUrl: r.downloadUrl || null, downloadScaleM: r.downloadScaleM != null ? r.downloadScaleM : null,
+      confusion: r.confusion || null,
+      classes: r.classes.map(function (c) {
+        return { classId: c.classId, code: c.code, en: c.en, ar: c.ar, color: c.color, name: c.name,
+                 percent: c.percent, areaM2: c.areaM2, pa: c.pa, ua: c.ua, f1: c.f1, support: c.support };
+      })
     };
   }
   var suppressSave = false;   // set while reopening a historical run (no duplicate row)
@@ -2261,10 +2884,42 @@
       state.samples = (run.samplePoints || []).map(function (sp) { return { classId: sp.classId, lon: sp.lon, lat: sp.lat }; });
       renderSamples();
       toast(t("ws.history.loaded"));
-      // re-run the local preview to redraw the map (deterministic: same input → same seed);
-      // do not re-save: this row already exists in the history
-      suppressSave = true;
-      runPreview(run.algorithm);
+      if (run.results && run.results.mode === "live" && run.results.tileUrl) {
+        // a live row carries its full result: restore it directly (instant)
+        var rr = run.results;
+        var res = {
+          mode: "live", algorithm: run.algorithm, algorithmName: t("algo.names." + run.algorithm),
+          scheme: rr.scheme || run.scheme || "general", family: rr.family || null,
+          activeClassIds: rr.activeClassIds || null, excludedClassIds: rr.excludedClassIds || [],
+          season: rr.season, dateFrom: rr.dateFrom, dateTo: rr.dateTo,
+          tileUrl: rr.tileUrl, previewImage: null, grid: null,
+          oa: rr.oa != null ? rr.oa : null, kappa: rr.kappa != null ? rr.kappa : null,
+          classes: (rr.classes || []).map(function (c) {
+            var cls = classById(c.classId, rr.scheme || "general");
+            return { classId: c.classId, code: c.code != null ? c.code : (cls ? cls.code : null),
+                     en: c.en, ar: c.ar, color: c.color || (cls ? cls.color : "#ccc"),
+                     name: c.name != null ? c.name : className(cls), share: (c.percent || 0) / 100,
+                     percent: c.percent, areaM2: c.areaM2, pa: c.pa, ua: c.ua, f1: c.f1, support: c.support || 0 };
+          }),
+          confusion: rr.confusion || null, nValPoints: rr.nValPoints != null ? rr.nValPoints : null,
+          nImages: rr.nImages || null, nTrain: rr.nTrain || null, nVal: rr.nVal || null,
+          sampleSource: rr.sampleSource || null, durationMs: rr.durationMs || null,
+          noteCodes: (rr.noteCodes || []).slice(),
+          downloadUrl: rr.downloadUrl || null, downloadScaleM: rr.downloadScaleM != null ? rr.downloadScaleM : null,
+          areaKm2: rr.areaKm2 != null ? rr.areaKm2 : (state.aoi ? G.m2ToKm2(state.aoi.areaM2) : null),
+          fromHistory: true
+        };
+        state.results = res;
+        state.resultsParams = { params: run.params || {}, cloudMax: state.params.cloudMax };
+        recordCompare(res);
+        showOverlay();
+        renderResults();
+        renderLegend();
+      } else {
+        // preview row: re-run the local preview (deterministic: same input → same seed)
+        suppressSave = true;
+        runPreview(run.algorithm);
+      }
     }, function () { toast(t("ws.history.error"), true); });
   }
 
@@ -2291,7 +2946,9 @@
       td0.appendChild(btn); tr.appendChild(td0);
       td(tr, t("algo.group." + a.group), "");
       td(tr, a.group === "supervised" ? t("algo.labels.yes") : t("algo.labels.no"), "wrap");
-      td(tr, a.key === "kmeans" || a.key === "signature" ? t("algo.labels.none") : t("ws.results.notComputed"), "wrap");
+      td(tr, a.key === "kmeans" || a.key === "signature"
+        ? t("algo.labels.none")
+        : (compareCell(a.key) || t("ws.results.notComputed")), "wrap");
       td(tr, a.params.length ? a.params.map(function (pk) { return t("ws.algorithm." + pk); }).join(" · ") : t("algo.labels.fixed"), "wrap");
       var tdc = el("td", "num", "↖");
       tdc.className = "icon-dir";
@@ -2467,8 +3124,14 @@
     });
     $("#season-tabs").addEventListener("click", function (ev) {
       var b = ev.target.closest(".tab"); if (!b || b.disabled) return;
-      state.season = b.getAttribute("data-season");
-      if (state.season !== "custom") { /* presets carry their own dates */ }
+      var next = b.getAttribute("data-season");
+      if (next === "custom" && state.season !== "custom") {
+        // entering custom detection: start from the preset's exact dates
+        var per = I.period(state.season, state.year);
+        state.customFrom = per.dateFrom;
+        state.customTo = per.dateTo;
+      }
+      state.season = next;
       $$("#season-tabs .tab").forEach(function (x) { x.classList.toggle("is-on", x === b); });
       updateSeasonInfo();
       updateSamplesUI();
@@ -2513,10 +3176,10 @@
         label.textContent = isLive() ? t("ws.results.modeLive") : t("ws.previewBadge");
       }
     }
-    // the long preview explanation only belongs to preview deployments —
-    // live sites show the green badge instead
+    // the long preview explanation only belongs to deployments the SERVER
+    // confirmed as key-less; a network hiccup at boot must not show it
     var note = document.querySelector(".preview-note");
-    if (note) note.hidden = isLive();
+    if (note) note.hidden = isLive() || !state.gee.demoConfirmed;
   }
 
   function boot() {
@@ -2543,13 +3206,27 @@
     $("#sample-aoi-btn").addEventListener("click", loadSampleAoi);
     $("#draw-poly").addEventListener("click", function () { startDrawing("poly"); });
     $("#draw-rect").addEventListener("click", function () { startDrawing("rect"); });
-    $("#draw-clear").addEventListener("click", function () { endDrawing(false); drawLayer.clearLayers(); });
+    $("#draw-clear").addEventListener("click", function () { endDrawing(false); drawLayer.clearLayers(); clearAoi(); });
+    // map-toolbar draw tools: the same drawing engine as the study-area panel,
+    // one click away from the map (polygon / rectangle / triangle / circle)
+    $$("#draw-tools button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var mode = b.getAttribute("data-draw");
+        if (state.drawing && state.drawing.mode === mode) { endDrawingMode(); drawLayer.clearLayers(); return; }
+        // switch the AOI panel to the draw tab so the hints are visible
+        var drawTab = document.querySelector('#aoi-tabs .tab[data-tab="draw"]');
+        if (drawTab) drawTab.click();
+        startDrawing(mode);
+      });
+    });
     $("#circle-apply").addEventListener("click", applyCircle);
     $("#bb-apply").addEventListener("click", applyBbox);
     $("#run-btn").addEventListener("click", function () { runPreview(state.algorithm); });
     $("#csv-btn").addEventListener("click", classesCsv);
     $("#parcels-csv-btn").addEventListener("click", parcelsCsv);
-    $("#print-btn").addEventListener("click", function () { updateReportHead(); window.print(); });
+    $("#print-btn").addEventListener("click", printReport);
+    $("#png-btn").addEventListener("click", exportPng);
+    $("#geojson-export-btn").addEventListener("click", exportGeojson);
     $("#unit-second").addEventListener("change", function () { state.secondUnit = this.value; savePrefs(); renderResults(); });
     $("#unit-second").value = state.secondUnit;
     // menu + scroll

@@ -754,3 +754,35 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
 @media print {
   .map-toolbar, .map-coords, .map-ab, .season-badge, .level-seg, .custom-range, .legend-detail, .insight-box { display: none !important; }
 }
+
+/* ---------------------------------------------------------------- full screen
+ * The whole .ws-map card goes full screen: the map fills the viewport and the
+ * legend (a sibling of .map-wrap) stays visible underneath it. */
+.ws-map:fullscreen { display: flex; flex-direction: column; background: var(--bg); padding: 0; border-radius: 0; }
+.ws-map:fullscreen .map-wrap { flex: 1 1 auto; min-height: 0; border-radius: 0; }
+.ws-map:fullscreen .map-toolbar { position: absolute; z-index: 1100; inset-inline: 10px; bottom: 10px; pointer-events: none; }
+.ws-map:fullscreen .map-toolbar .map-tools { pointer-events: auto; }
+.ws-map:fullscreen .legend { max-height: 18vh; overflow-y: auto; margin: 0; padding: 10px 14px; background: rgba(255, 255, 255, 0.96); border-top: 1px solid var(--line); }
+.ws-map:fullscreen .map-coords { z-index: 1200; }
+.ws-map:fullscreen .map-ab { z-index: 1200; }
+
+/* blank basemap: the classified layer with no imagery underneath */
+#map.map-blank { background: #101311; }
+#map.map-blank .leaflet-container { background: #101311; }
+
+/* ---------------------------------------------------------------- run progress */
+.run-progress { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.run-progress-bar { position: relative; width: clamp(90px, 14vw, 220px); height: 6px; border-radius: 3px; background: var(--panel-2); overflow: hidden; }
+.run-progress-bar i { position: absolute; inset-block: 0; inset-inline-start: 0; width: 0%; border-radius: 3px; background: linear-gradient(90deg, var(--lime), #5ba300); transition: width .35s ease; }
+.run-progress-label { font-size: 0.72rem; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 46vw; }
+
+/* ---------------------------------------------------------------- draw tools on the map */
+#draw-tools button.is-on { background: #fff; color: var(--ink); box-shadow: var(--shadow-sm); }
+#map.crosshair { cursor: crosshair !important; }
+
+/* re-run fresh chip (cached result) */
+.rerun-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 0.72rem; color: var(--muted); background: var(--panel-2); border: 1px dashed var(--line); border-radius: var(--r-pill); padding: 3px 10px; cursor: pointer; }
+.rerun-chip:hover { color: var(--ink); border-color: var(--ink-2); }
+
+/* the GeoJSON import label-button inside the upload panel */
+#panel-upload label[for="geojson-input"] { display: inline-flex; align-items: center; gap: 6px; }

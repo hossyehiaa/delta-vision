@@ -306,6 +306,11 @@
               <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 16H5l7-16z"></path></svg>
               <span data-i18n="ws.sample.button"></span>
             </button>
+            <label class="btn btn-ghost btn-sm" for="geojson-input">
+              <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"></path></svg>
+              <span data-i18n="ws.map.geojsonImport"></span>
+              <input type="file" id="geojson-input" accept=".json,.geojson,application/json" hidden>
+            </label>
             <p class="hint" id="sample-text"></p>
           </div>
 
@@ -420,6 +425,10 @@
 
         <div class="ws-actions">
           <span class="chip" id="gee-badge" aria-live="polite"></span>
+          <div class="run-progress" id="run-progress" hidden>
+            <div class="run-progress-bar"><i></i></div>
+            <span class="run-progress-label" id="run-progress-label"></span>
+          </div>
           <button class="btn btn-lime btn-lg" id="run-btn" data-i18n="ws.run"></button>
           <button class="btn btn-ghost" id="history-btn" data-i18n="ws.historyBtn" hidden></button>
           <button class="btn btn-ghost" id="compare-btn" data-i18n="ws.compareBtn"></button>
@@ -435,6 +444,9 @@
               <span class="seg seg-icons" id="basemap-seg">
                 <button class="is-on" type="button" data-basemap="satellite" data-i18n-title="ws.map.satellite" data-i18n-aria="ws.map.satellite">
                   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 15l5-5 4 4 3-3 6 6"></path><circle cx="15.5" cy="9.5" r="1.6"></circle></svg>
+                </button>
+                <button type="button" data-basemap="none" data-i18n-title="ws.map.none" data-i18n-aria="ws.map.none">
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M5 5l14 14"></path></svg>
                 </button>
                 <button type="button" data-basemap="hybrid" data-i18n-title="ws.map.hybrid" data-i18n-aria="ws.map.hybrid">
                   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="14" rx="2"></rect><path d="M3 15l5-5 4 4 3-3 6 6"></path><path d="M7 9h4M9 7v4"></path></svg>
@@ -457,6 +469,20 @@
               </label>
             </div>
             <div class="map-tools">
+              <span class="seg seg-icons" id="draw-tools">
+                <button type="button" data-draw="poly" data-i18n-title="ws.draw.polygon" data-i18n-aria="ws.draw.polygon">
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 14-16 4z"></path></svg>
+                </button>
+                <button type="button" data-draw="rect" data-i18n-title="ws.draw.rectangle" data-i18n-aria="ws.draw.rectangle">
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="6" width="16" height="12" rx="1"></rect></svg>
+                </button>
+                <button type="button" data-draw="triangle" data-i18n-title="ws.draw.triangle" data-i18n-aria="ws.draw.triangle">
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 4l8 16H4z"></path></svg>
+                </button>
+                <button type="button" data-draw="circle" data-i18n-title="ws.draw.circle" data-i18n-aria="ws.draw.circle">
+                  <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8"></circle><circle cx="12" cy="12" r="1.4"></circle></svg>
+                </button>
+              </span>
               <span class="seg seg-layers" id="layer-toggles">
                 <button class="is-on" type="button" data-layer="overlay" data-i18n="ws.map.overlay"></button>
                 <button type="button" data-layer="gt" data-i18n="ws.map.gt" id="gt-toggle" data-i18n-title="ws.samples.gtHint"></button>
@@ -473,10 +499,9 @@
                 <button type="button" id="reset-aoi-btn" data-i18n-title="ws.map.reset" data-i18n-aria="ws.map.reset">
                   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l7 16H5l7-16z"></path></svg>
                 </button>
-                <button type="button" id="geojson-btn" data-i18n-title="ws.map.geojson" data-i18n-aria="ws.map.geojson">
+                <button type="button" id="geojson-export-btn" data-i18n-title="ws.map.geojsonExport" data-i18n-aria="ws.map.geojsonExport">
                   <svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z"></path><path d="M12 3v18M4 7.5l16 9M20 7.5l-16 9"></path></svg>
                 </button>
-                <input type="file" id="geojson-input" accept=".json,.geojson,application/json" hidden>
               </span>
             </div>
           </div>
@@ -498,6 +523,7 @@
           </div>
           <div class="results-actions">
             <select class="select" id="unit-second" aria-label=""><option value="km2">km²</option><option value="ha">ha</option><option value="m2">m²</option></select>
+            <button class="btn btn-dark btn-sm" id="png-btn" data-i18n="ws.results.png" data-i18n-title="ws.results.pngHint"></button>
             <button class="btn btn-ghost btn-sm" id="csv-btn" data-i18n="ws.results.export"></button>
             <button class="btn btn-ghost btn-sm" id="parcels-csv-btn" data-i18n="ws.results.parcelsCsv" hidden></button>
             <button class="btn btn-dark btn-sm" id="print-btn" data-i18n="ws.results.print"></button>
@@ -519,7 +545,7 @@
               <div class="stack" id="confusion-wrap" hidden>
                 <h3 class="sub-title" data-i18n="ws.results.confusionTitle"></h3>
                 <div class="table-wrap"><table class="dv-table matrix" id="confusion-table"></table></div>
-                <p class="hint" data-i18n="ws.results.confusionHint"></p>
+                <p class="hint" id="confusion-caption"></p>
               </div>
               <div class="stack" id="dss-wrap" hidden>
                 <h3 class="sub-title" data-i18n="ws.results.dssTitle"></h3>

@@ -16,8 +16,9 @@
  * Without GEE_PRIVATE_KEY_JSON / GEE_KEY_FILE the endpoint answers 503
  * { error: "gee_not_configured" } and the frontend stays in preview mode. */
 "use strict";
-const { json, readBody } = require("../_db");
+const { json, readBody, getPool } = require("../_db");
 const E = require("../../engine/_gee_engine");
+const cache = require("../_gee_cache");
 
 function num(v, def) {
   const n = Number(v);
@@ -52,6 +53,7 @@ function normalize(body) {
     samplePoints: Array.isArray(body.samplePoints) ? body.samplePoints : [],
     aoiGeo: aoiGeo && (aoiGeo.type === "Polygon" || aoiGeo.type === "MultiPolygon") ? aoiGeo : undefined,
     aoiName: body.aoiName ? String(body.aoiName) : undefined,
+    fresh: body.fresh === true,
   };
 }
 
@@ -70,7 +72,17 @@ module.exports = async function (req, res) {
       return json(res, { kind: "compare", summary, best });
     }
     if (!body.algorithm) return json(res, { error: "unknown_algorithm" }, 400);
+    // server-side result cache: identical repeat requests answer from
+    // memory / Neon (short TTL); the client's "Re-run fresh" sets fresh
+    let pool = null;
+    try { pool = await getPool(); } catch (e) { /* cache best-effort */ }
+    const key = cache.runKey(body);
+    if (!body.fresh) {
+      const cached = await cache.get(pool, key);
+      if (cached) return json(res, { ...cached, cached: true });
+    }
     const result = await E.runClassification({ ...body, kind: "run" });
+    cache.put(pool, key, result);
     return json(res, result);
   } catch (e) {
     const code = e instanceof E.GEEError ? e.code : "run_failed";

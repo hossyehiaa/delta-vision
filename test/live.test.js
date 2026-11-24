@@ -86,8 +86,18 @@ function mockResult(body) {
   const donut = await page.locator("#donut").textContent();
   ok(/Earth Engine/.test(donut), "donut caption says Earth Engine", donut.slice(0, 80));
 
-  // live failure path
+  // live failure path (reload first: the successful run above now lives in the
+  // client run cache, and a cached combination never re-hits the backend)
   console.log("== 3. Live failure");
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await page.waitForTimeout(900);
+  // the session persists across the reload — no second login needed
+  if (await page.locator("#demo-btn").isVisible()) {
+    await page.click("#demo-btn");
+    await page.waitForTimeout(900);
+  }
+  await page.click("#sample-aoi-btn");
+  await page.waitForTimeout(400);
   await page.route("**/api/fail", async (route) => { await route.fulfill({ status: 503, body: "boom" }); });
   await page.evaluate(() => { window.DV_BACKEND_URL = "https://mock.example/api/fail"; });
   await page.click("#run-btn");

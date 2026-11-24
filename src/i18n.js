@@ -211,7 +211,7 @@
       title: "Two-level maps of the Delta, measured in feddan",
       subtitle: "Delta Vision classifies Sentinel-2 imagery at two levels trained on the same 360 verified field points: a reliable land-cover level (Water, Urban, Bare Land, Cropland) and a seasonally filtered crop-type level with the accuracy measured on a held-out 30 % — never inflated. Draw a study area or upload your own data, choose a period and an algorithm, and read the result on the map and in the table.",
       ctaPrimary: "Start classifying", ctaSecondary: "How it works",
-      chipAlgo: "10 algorithms", chipRes: "10 m pixels", chipShp: "SHP & CSV upload", chipLevels: "2 classification levels",
+      chipAlgo: "11 algorithms", chipRes: "10 m pixels", chipShp: "SHP & CSV upload", chipLevels: "2 classification levels",
       heroAlt: "Fields and a village of the Nile Delta seen from the air",
       floatLabel: "feddan in the built-in Borj El Arab study area",
       stats: [
@@ -255,7 +255,7 @@
         items: [
           { title: "Create an account", text: "Sign up, or open the demo account to look around. Accounts and run history live on the server." },
           { title: "Draw or upload a study area", text: "Use the built-in Borj El Arab boundary, draw a rectangle or polygon, type coordinates, or upload a shapefile / GeoJSON." },
-          { title: "Choose level, period and algorithm", text: "Land cover or crop type; a season preset or a custom range; one of the ten algorithms with its parameters." },
+          { title: "Choose level, period and algorithm", text: "Land cover or crop type; a season preset or a custom range; one of the eleven algorithms with its parameters." },
           { title: "Read the map and the numbers", text: "Feddan per class, accuracy from the held-out points, the confusion matrix, and a CSV / GeoTIFF export." }
         ]
       },
@@ -383,6 +383,7 @@
         overlay: "Classification", gt: "Ground truth", aoi: "AOI outline",
         ab: "A/B", abHint: "Drag the handle to wipe between the satellite image and the classification.",
         reset: "Reset to study area", geojson: "GeoJSON",
+        none: "Blank basemap", geojsonExport: "Export the study area (GeoJSON)", geojsonImport: "Import GeoJSON area",
         inspectHint: "Click anywhere on the map to inspect that pixel (NDVI series for the selected period)."
       },
       results: {
@@ -401,10 +402,22 @@
         dssTotalYield: "Indicative yield total", dssTotalWater: "Indicative water total",
         clusters: "clusters", mode: "Mode", modeLive: "Earth Engine", modePreview: "Preview",
         export: "Export CSV", parcelsCsv: "Parcels CSV", print: "Print report", download: "GeoTIFF",
+        png: "Classified image (PNG)", pngHint: "Export a publication-ready classified map: full AOI, active legend, no basemap",
+        pngStitching: "Rendering the classified image…", pngTiles: "Fetching Earth Engine tiles ({n} tiles)…",
+        pngNoTiles: "The classified layer has expired — run the classification again, then export.",
+        pngFailed: "The image export failed ({err}).",
+        tifOk: "GeoTIFF downloaded: {size} at {scale} m/px", tifFailed: "The GeoTIFF download failed ({err}).",
+        printTitle: "Delta Vision — classification report",
+        printIntro: "Full-frame classified map, class areas and validation matrix.",
+        geojsonOk: "GeoJSON downloaded: {n} features, {area} feddan", geojsonEmpty: "Draw or load a study area first.",
+        stageFetch: "Fetching Sentinel-2 imagery…", stageTrain: "Training the model…", stageRender: "Rendering the map…",
+        fromCache: "shown from cache", rerun: "Re-run fresh",
+        confusionCaption: "Pixel-based validation: {pixels} pixels sampled from {points} withheld test points (70/30 split by point).",
+        confusionNoPoints: "Pixel-based validation: {pixels} validation pixels.",
         signatureTitle: "Reference signatures — {season}",
         signatureText: "Mean NDVI and the 10–90 % range of each class, measured at the built-in reference points.",
         insight: "Measured accuracy is low at this level: crop types overlap strongly in the Sentinel-2 signal. Switch to the land-cover level for a reliable map, or add crop-specific samples.",
-        trainingSet: "Trained on {source} ({n} points · {k} classes) · {split} split"
+        trainingSet: "{source} ({n} points · {k} classes) · {split} split"
       },
       history: {
         title: "Run history", close: "Close", text: "Every finished run of this account, newest first.",
@@ -413,6 +426,7 @@
       },
       compare: {
         title: "Compare algorithms", close: "Close",
+        computed: "OA {oa}% · κ {k} (measured)",
         text: "Pick an algorithm to run it now on the same study area, period and level.",
         cols: { algo: "Algorithm", family: "Family", samples: "Needs samples", accuracy: "Accuracy", params: "Parameters", choose: "Run" }
       },
@@ -422,7 +436,7 @@
         loadBest: "Show the winner on the map",
         cols: { algo: "Algorithm", oa: "Overall accuracy", kappa: "Kappa" }
       },
-      gee: { checking: "Checking Earth Engine…", live: "Earth Engine live", preview: "Preview mode" },
+      gee: { checking: "Checking Earth Engine…", live: "Earth Engine live", preview: "Preview mode", unsure: "Earth Engine status not verified" },
       ndvi: { title: "NDVI at this point", loading: "Loading the NDVI series…", empty: "No cloud-free observations at this point in the selected period." },
     notes: {
       preview: "Preview mode: illustrative pattern, not a real classification.",
@@ -452,7 +466,7 @@
       BACKEND_TIMEOUT: "The run took too long. Try a smaller area or a shorter period.", BACKEND_BAD: "The server answered with an unexpected result.",
       gee_not_configured: "Earth Engine is not configured on this server — the app stays in preview mode.",
       no_images: "No cloud-free Sentinel-2 scenes in that period — widen the dates or raise the cloud limit.",
-      bad_date_range: "The date range is invalid.", too_few_samples: "Too few sample points are in season for this period.",
+      popup_blocked: "The report window was blocked — allow pop-ups for this site.", bad_date_range: "The date range is invalid.", too_few_samples: "Too few sample points are in season for this period.",
       mahalanobis_needs_samples: "Mahalanobis needs more training pixels per class — add samples or pick another algorithm.",
       samples_outside_aoi: "No sample point produced a valid pixel — check the period or the cloud limit.",
       unknown_algorithm: "Unknown algorithm.", all_algorithms_failed: "Every algorithm failed to train on this window.",
@@ -466,7 +480,7 @@
 
     algo: {
       title: "Algorithms",
-      subtitle: "Ten ways to turn one feature stack into a map — all trained on the same 360 verified points and measured on the same held-out 30 %.",
+      subtitle: "Eleven ways to turn one feature stack into a map — all trained on the same 360 verified points and measured on the same held-out 30 %.",
       cta: "Open the workspace",
       group: { supervised: "Supervised", unsupervised: "Unsupervised", knowledge: "Knowledge-based" },
       groupText: {
@@ -581,7 +595,7 @@
       title: "خرائط للدلتا على مستويين، بالفدان",
       subtitle: "يصنّف دلتا فيجن صور Sentinel-2 على مستويين يُدرَّبان على 360 نقطة حقلية موثّقة: مستوى غطاء أرضي موثوق (مياه، عمران، أرض بور، أراضٍ زراعية)، ومستوى محاصيل مُرشَّح موسميًا تُعرض دقته الحقيقية المقاسة على 30% محتجزة — بلا أي تضخيم. ارسم منطقة دراسة أو ارفع بياناتك، واختر الفترة والخوارزمية، واقرأ النتيجة على الخريطة وفي الجدول.",
       ctaPrimary: "ابدأ التصنيف", ctaSecondary: "كيف يعمل؟",
-      chipAlgo: "10 خوارزميات", chipRes: "دقة 10 م", chipShp: "رفع SHP و CSV", chipLevels: "مستويان للتصنيف",
+      chipAlgo: "١١ خوارزمية", chipRes: "دقة 10 م", chipShp: "رفع SHP و CSV", chipLevels: "مستويان للتصنيف",
       heroAlt: "حقول وقرية في دلتا النيل من الجو",
       floatLabel: "فدان داخل منطقة الدراسة المدمجة برج العرب",
       stats: [
@@ -625,7 +639,7 @@
         items: [
           { title: "أنشئ حسابًا", text: "سجّل بياناتك أو افتح الحساب التجريبي للتجول. الحسابات وسجل التشغيل محفوظة على الخادم." },
           { title: "ارسم أو ارفع منطقة دراسة", text: "استخدم حدود برج العرب المدمجة، أو ارسم مستطيلًا/مضلعًا، أو اكتب إحداثيات، أو ارفع ملف شكل / GeoJSON." },
-          { title: "اختر المستوى والفترة والخوارزمية", text: "غطاء أرض أو محاصيل؛ فترة مسبقة أو مدى مخصص؛ واحدة من عشر خوارزميات مع معاملاتها." },
+          { title: "اختر المستوى والفترة والخوارزمية", text: "غطاء أرض أو محاصيل؛ فترة مسبقة أو مدى مخصص؛ واحدة من إحدى عشرة خوارزمية مع معاملاتها." },
           { title: "اقرأ الخريطة والأرقام", text: "الفدان لكل فئة، والدقة من النقاط المحتجزة، ومصفوفة الالتباس، وتصدير CSV وGeoTIFF." }
         ]
       },
@@ -753,6 +767,7 @@
         overlay: "التصنيف", gt: "الحقيقة الأرضية", aoi: "حدود المنطقة",
         ab: "مقارنة A/B", abHint: "اسحب المقبض للمسح بين صورة القمر الصناعي والتصنيف.",
         reset: "عودة لمنطقة الدراسة", geojson: "GeoJSON",
+        none: "بدون خريطة أساس", geojsonExport: "تصدير منطقة الدراسة (GeoJSON)", geojsonImport: "استيراد منطقة GeoJSON",
         inspectHint: "انقر في أي مكان على الخريطة لفحص ذلك البكسل (سلسلة NDVI للفترة المختارة)."
       },
       results: {
@@ -771,10 +786,22 @@
         dssTotalYield: "إجمالي الإنتاجية الاسترشادية", dssTotalWater: "إجمالي المياه الاسترشادية",
         clusters: "عناقيد", mode: "الوضع", modeLive: "Earth Engine", modePreview: "معاينة",
         export: "تصدير CSV", parcelsCsv: "CSV القطع", print: "طباعة التقرير", download: "GeoTIFF",
+        png: "صورة مصنّفة (PNG)", pngHint: "تصدير خريطة مصنّفة جاهزة للنشر: المنطقة كاملة، مفتاح الخريطة الفعلي، بدون خريطة أساس",
+        pngStitching: "جاري تركيب الصورة المصنّفة…", pngTiles: "جاري جلب مربّعات Earth Engine ({n} مربّعًا)…",
+        pngNoTiles: "انتهت صلاحية الطبقة المصنّفة — أعد التصنيف ثم صدّر الصورة.",
+        pngFailed: "فشل تصدير الصورة ({err}).",
+        tifOk: "تم تنزيل GeoTIFF: {size} بدقة {scale} م/بكسل", tifFailed: "فشل تنزيل GeoTIFF ({err}).",
+        printTitle: "دلتا فيجن — تقرير التصنيف",
+        printIntro: "الخريطة المصنّفة كاملة، مساحات الفئات، ومصفوفة التحقق.",
+        geojsonOk: "تم تنزيل GeoJSON: {n} عنصرًا بمساحة {area} فدان", geojsonEmpty: "ارسم أو حمّل منطقة دراسة أولًا.",
+        stageFetch: "جاري جلب صور Sentinel-2…", stageTrain: "جاري تدريب النموذج…", stageRender: "جاري إنتاج الخريطة…",
+        fromCache: "معروض من الذاكرة المؤقتة", rerun: "إعادة تشغيل جديدة",
+        confusionCaption: "تحقق على مستوى البكسل: {pixels} بكسل مأخوذة من {points} نقطة اختبار محجوزة (تقسيم 70/30 بالنقطة).",
+        confusionNoPoints: "تحقق على مستوى البكسل: {pixels} بكسل تحقق.",
         signatureTitle: "بصمات المرجع — {season}",
         signatureText: "متوسط NDVI والمدى 10–90% لكل فئة، مقاسة عند نقاط المرجع المدمجة.",
         insight: "الدقة المقاسة منخفضة عند هذا المستوى: تتداخل المحاصيل بقوة في إشارة Sentinel-2. انتقل لمستوى غطاء الأرض لخريطة موثوقة، أو أضف عينات خاصة بالمحاصيل.",
-        trainingSet: "دُرِّب على {source} ({n} نقطة · {k} فئات) · تقسيم {split}"
+        trainingSet: "{source} ({n} نقطة · {k} فئات) · تقسيم {split}"
       },
       history: {
         title: "سجل التشغيل", close: "إغلاق", text: "كل عملية تشغيل مكتملة لهذا الحساب، الأحدث أولًا.",
@@ -783,6 +810,7 @@
       },
       compare: {
         title: "قارن الخوارزميات", close: "إغلاق",
+        computed: "OA {oa}% · κ {k} (مقاسة)",
         text: "اختر خوارزمية لتشغّلها الآن على نفس منطقة الدراسة والفترة والمستوى.",
         cols: { algo: "الخوارزمية", family: "العائلة", samples: "تحتاج عينات", accuracy: "الدقة", params: "المعاملات", choose: "تشغيل" }
       },
@@ -792,7 +820,7 @@
         loadBest: "اعرض الفائز على الخريطة",
         cols: { algo: "الخوارزمية", oa: "الدقة الكلية", kappa: "Kappa" }
       },
-      gee: { checking: "جارٍ فحص Earth Engine…", live: "Earth Engine مباشر", preview: "وضع المعاينة" },
+      gee: { checking: "جارٍ فحص Earth Engine…", live: "Earth Engine مباشر", preview: "وضع المعاينة", unsure: "تعذر التحقق من حالة Earth Engine" },
       ndvi: { title: "NDVI عند هذه النقطة", loading: "جارٍ تحميل سلسلة NDVI…", empty: "لا مشاهد خالية من السحب عند هذه النقطة في الفترة المختارة." },
     notes: {
       preview: "وضع المعاينة: نمط توضيحي، لا تصنيفًا حقيقيًا.",
@@ -822,7 +850,7 @@
       BACKEND_TIMEOUT: "استغرقت العملية طويلًا. جرّب منطقة أصغر أو فترة أقصر.", BACKEND_BAD: "أجاب الخادم بنتيجة غير متوقعة.",
       gee_not_configured: "لم يُضبط Earth Engine على هذا الخادم — يبقى التطبيق في وضع المعاينة.",
       no_images: "لا مشاهد Sentinel-2 خالية من السحب في هذه الفترة — وسّع التواريخ أو ارفع حد الغيوم.",
-      bad_date_range: "المدى الزمني غير صالح.", too_few_samples: "نقاط العينات داخل الموسم قليلة جدًا لهذه الفترة.",
+      popup_blocked: "تم حظر نافذة التقرير — اسمح بالنوافذ المنبثقة لهذا الموقع.", bad_date_range: "المدى الزمني غير صالح.", too_few_samples: "نقاط العينات داخل الموسم قليلة جدًا لهذه الفترة.",
       mahalanobis_needs_samples: "تحتاج مسافة ماهالانوبيس بكسلات تدريب أكثر لكل فئة — أضف عينات أو اختر خوارزمية أخرى.",
       samples_outside_aoi: "لم تنتج أي نقطة عينة بكسلًا صالحًا — راجع الفترة أو حد الغيوم.",
       unknown_algorithm: "خوارزمية غير معروفة.", all_algorithms_failed: "فشلت كل الخوارزميات في التدريب على هذه النافذة.",
@@ -836,7 +864,7 @@
 
     algo: {
       title: "الخوارزميات",
-      subtitle: "عشر طرق لتحويل حزمة صفات واحدة إلى خريطة — كلها تُدرَّب على 360 نقطة موثّقة وتُقاس على نفس الـ30% المحتجزة.",
+      subtitle: "إحدى عشرة طريقة لتحويل حزمة صفات واحدة إلى خريطة — كلها تُدرَّب على 360 نقطة موثّقة وتُقاس على نفس الـ30% المحتجزة.",
       cta: "افتح مساحة العمل",
       group: { supervised: "موجهة", unsupervised: "غير موجّهة", knowledge: "معرفية" },
       groupText: {

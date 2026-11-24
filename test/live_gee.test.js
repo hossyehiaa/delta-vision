@@ -32,9 +32,9 @@ const RUN_L1 = {
     { classId: 3, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#c2a37a", areaKm2: 78.1, percent: 13.1, pa: 0.433, ua: 0.538, f1: 0.538, support: 108 },
     { classId: 1, code: "WTR", en: "Water", ar: "مياه", color: "#2f80ed", areaKm2: 47.0, percent: 7.9, pa: 0.89, ua: 0.92, f1: 0.9, support: 108 },
   ],
-  confusion: { classIds: [1, 2, 3, 4], rows: [[96, 2, 4, 6], [3, 78, 27, 0], [1, 12, 47, 48], [2, 0, 3, 103]] },
-  nImages: 41, nTrain: 2098, nVal: 910, durationMs: 29500,
-  downloadUrl: "https://download.test/dv_landcover_rf.tif",
+  confusion: { classIds: [1, 2, 3, 4], rows: [[96, 2, 4, 6], [3, 78, 27, 0], [1, 12, 47, 48], [2, 0, 3, 103]], total: 432, nValPoints: 108 },
+  nImages: 41, nTrain: 2098, nVal: 910, nValPoints: 108, durationMs: 29500,
+  downloadUrl: "https://download.test/dv_landcover_rf.tif", downloadScaleM: 30,
   areaKm2: 595.6, sampleSource: "builtin", nReferencePoints: 360,
   sampleClassCounts: { "1": 36, "2": 36, "3": 36, "4": 360 - 108 },
   notes: ["builtin_training"],
@@ -155,8 +155,10 @@ const COMPARE = {
   ok(cmCells === 16, "confusion matrix is 4×4", String(cmCells));
   const diag = await page.locator("#confusion-table td.diag").count();
   ok(diag === 4, "green diagonal cells", String(diag));
-  const geoHref = await page.locator("#geotiff-btn").getAttribute("href");
-  ok(geoHref === RUN_L1.downloadUrl, "GeoTIFF download link", String(geoHref));
+  const geoBtn = await page.locator("#geotiff-btn").count();
+  const geoTxt = geoBtn ? await page.locator("#geotiff-btn").textContent() : "";
+  ok(geoBtn === 1 && /GeoTIFF/.test(geoTxt), "GeoTIFF export button (blob download + scale)", geoTxt);
+  ok(/30\s*m/.test(geoTxt), "GeoTIFF button shows the export scale", geoTxt);
   ok((await page.locator("#dss-wrap").isVisible()) === false, "no decision-support rows at the land-cover level");
 
   console.log("== 4. live tile overlay + scene layer");
@@ -211,6 +213,9 @@ const COMPARE = {
 
   console.log("== 8. engine error mapping");
   nextRunError = "no_images";
+  // the same combination is already cached client-side — a plain Run click
+  // would replay it; switch to an uncached algorithm so the mock error fires
+  await page.selectOption("#algorithm-select", "svm");
   await page.click("#run-btn");
   await page.waitForTimeout(900);
   const toastTxt = await page.locator("#toast").textContent();

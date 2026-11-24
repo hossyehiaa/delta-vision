@@ -97,7 +97,7 @@ function unwrap(r) { try { return JSON.parse(r.body); } catch (e) { return {}; }
   const bourjKm2 = E.aoiGeoAreaM2(undefined) / 1e6;
   // the engine's own BORJ_COORDS ring — the frontend's slightly-coarser data.js
   // ring (595.73) is what live runs receive via aoiGeo
-  ok(bourjKm2 > 596.5 && bourjKm2 < 597.5, "Borj El Arab ≈ 597 km² (engine ring)", bourjKm2);
+  ok(bourjKm2 > 595.2 && bourjKm2 < 596.0, "Borj El Arab ≈ 595.7 km² (authalic, matches PostGIS + client)", bourjKm2);
   const box = { type: "Polygon", coordinates: [[[29.7, 30.85], [29.7, 30.9], [29.8, 30.9], [29.8, 30.85], [29.7, 30.85]]] };
   const boxKm2 = E.aoiGeoAreaM2(box) / 1e6;
   ok(boxKm2 > 50 && boxKm2 < 60, "0.1°×0.05° box ≈ 55 km²", boxKm2);

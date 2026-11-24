@@ -35,7 +35,7 @@ function ok(cond, name, extra) {
   ok(consoleErrors.length === 0, "no console errors on load", consoleErrors.slice(0, 3).join(" | "));
   ok(await page.locator("#view-home.is-on").count() === 1, "home view visible");
   ok((await page.title()).length > 5, "title set: " + (await page.title()));
-  ok(await page.locator("#hero-feddan").textContent() === "141,841.26", "hero feddan value", await page.locator("#hero-feddan").textContent());
+  ok(await page.locator("#hero-feddan").textContent() === "141,841.60", "hero feddan value", await page.locator("#hero-feddan").textContent());
   ok(await page.locator("#carousel-stage .slide").count() === 5, "5 carousel slides");
   ok(await page.locator("#product-row .product-card").count() === 4, "4 product cards");
   ok(await page.locator("#steps .step").count() === 4, "4 steps");
