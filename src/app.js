@@ -1782,7 +1782,7 @@
     var st = $("#signature-title"), sx = $("#signature-text");
     if (r.algorithm === "kmeans") {
       st.textContent = t("ws.results.clusters");
-      sx.textContent = t("notes.kmeans_no_accuracy");
+      sx.textContent = t("ws.notes.kmeans_no_accuracy");
       $("#signature-chart").innerHTML = "";
     } else {
       var fam = r.family || currentFamily();
@@ -1875,8 +1875,8 @@
       run.parentNode.insertBefore(insight, run.nextSibling);
     }
     if (run && r.noteCodes && r.noteCodes.length) {
-      var texts = r.noteCodes.filter(function (code) { return code !== "weak_accuracy"; }).map(function (code) { return t("notes." + code); })
-        .filter(function (s) { return s && s.indexOf("notes.") !== 0; });
+      var texts = r.noteCodes.filter(function (code) { return code !== "weak_accuracy"; }).map(function (code) { return t("ws.notes." + code); })
+        .filter(function (s) { return s && s.indexOf("ws.notes.") !== 0; });
       if (texts.length) {
         var p = el("p", "hint", texts.join(" · "));
         p.id = "run-notes";
@@ -1903,7 +1903,7 @@
     if (r.mode !== "live" && r.mode !== "preview") return;
     var algo = I.algorithmByKey(r.algorithm);
     if (algo.group !== "supervised") return;
-    var src = r.sampleSource === "manual" ? t("notes.manual_training") : t("notes.builtin_training");
+    var src = r.sampleSource === "manual" ? t("ws.notes.manual_training") : t("ws.notes.builtin_training");
     var line = el("p", "hint", t("ws.results.trainingSet", {
       source: src, n: fmt(r.nReferencePoints != null ? r.nReferencePoints : 360, 0),
       k: fmt(r.activeClassIds ? r.activeClassIds.length : (r.classes || []).length, 0),

@@ -9,6 +9,10 @@ cd "$(dirname "$0")/.."
 
 npx esbuild gee_src/engine.ts --bundle --platform=node --format=cjs --target=node22 \
   --outfile=engine/_gee_engine.js --log-level=error
+# minified twin (8 MB vs 18 MB): what the Vercel deployment ships — the CLI
+# upload protocol handles either, the minified one builds/deploys faster
+npx esbuild gee_src/engine.ts --bundle --platform=node --format=cjs --target=node22 --minify \
+  --outfile=engine/_gee_engine.min.js --log-level=error
 mkdir -p engine
 echo "bundled engine/_gee_engine.js: $(wc -c < engine/_gee_engine.js) bytes"
 node -e "
