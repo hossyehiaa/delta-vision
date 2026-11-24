@@ -625,10 +625,16 @@
   }
 
   // ================================================================== samples CSV
-  var LON_KEYS = ["lon", "lng", "long", "longitude", "x", "خط الطول", "longitud"];
-  var LAT_KEYS = ["lat", "latitude", "y", "دائرة العرض", "عرض"];
-  var CLS_KEYS = ["class", "classid", "class_id", "class_id_", "crop", "category", "label", "الفئة", "type"];
+  var LON_KEYS = ["lon", "lng", "long", "longitude", "x", "point_x", "pointx", "خط الطول", "longitud", "east"];
+  var LAT_KEYS = ["lat", "latitude", "y", "point_y", "pointy", "دائرة العرض", "عرض", "north"];
+  var CLS_KEYS = ["class", "classid", "class_id", "class_id_", "classname", "class_name", "crop", "category", "label", "الفئة", "type", "name"];
+  /** split one CSV text into rows, quoting-aware; the delimiter (, ; or tab) is
+   *  detected from the first non-empty line — the field data files use ";". */
   function parseCsv(text) {
+    var first = text.split(/\r?\n/, 1)[0] || "";
+    var delim = ",";
+    if ((count(first, ";") > count(first, ",")) || (count(first, ";") === count(first, ",") && count(first, ";") > 0 && first.indexOf(",") < 0)) delim = ";";
+    if (count(first, "\t") > count(first, delim)) delim = "\t";
     var rows = [], row = [], cell = "", q = false;
     for (var i = 0; i < text.length; i++) {
       var c = text[i];
@@ -636,13 +642,14 @@
         if (c === '"') { if (text[i + 1] === '"') { cell += '"'; i++; } else q = false; }
         else cell += c;
       } else if (c === '"') q = true;
-      else if (c === ",") { row.push(cell); cell = ""; }
+      else if (c === delim) { row.push(cell); cell = ""; }
       else if (c === "\n") { row.push(cell); rows.push(row); row = []; cell = ""; }
       else if (c !== "\r") cell += c;
     }
     if (cell !== "" || row.length) { row.push(cell); rows.push(row); }
     return rows.filter(function (r) { return r.some(function (v) { return v.trim() !== ""; }); });
   }
+  function count(s, ch) { var n = 0; for (var i = 0; i < s.length; i++) if (s[i] === ch) n++; return n; }
   function findKey(header, keys) {
     for (var i = 0; i < header.length; i++) {
       var h = String(header[i]).trim().toLowerCase();
@@ -652,7 +659,8 @@
   }
   /**
    * Training-sample CSV → [{lon, lat, classId|code|name, raw}].
-   * Columns lon/lat (many aliases) + class (id 1–12, code such as WHT, or a name) + optional header.
+   * Comma- or semicolon-separated; columns lon/lat/POINT_X/POINT_Y + class
+   * (id, code such as WHT, or a name such as Wheat / قمح) + optional header.
    */
   function parseSamplesCsv(text, resolveClass) {
     var bom = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
@@ -744,25 +752,17 @@
     }
     return [bi, bj];
   }
-  function buildClassPicker(classes, season, seed) {
-    // classes: [{id, prior:{winter, summer}}] — only season-active classes take part
-    function pv(c) {
-      // the engine's priorOf(): in the full year the prior is the mean of both seasons, and a class absent
-      // from a season's table (here: prior 0) counts 0.3
-      if (season === "full") return ((c.prior.winter > 0 ? c.prior.winter : 0.3) + (c.prior.summer > 0 ? c.prior.summer : 0.3)) / 2;
-      return c.prior[season] != null ? c.prior[season] : 0;
-    }
-    var active = classes.filter(function (c) { return c.prior && pv(c) > 0; });
-    var rare = { 10: 1.0, 11: 0.14, 12: 0.07 }; // fallow full weight; urban/water appear as small clusters only
+  function buildClassPicker(classes) {
+    // classes: [{id, weight}] — only classes with a positive weight take part
+    var active = classes.filter(function (c) { return c.weight > 0; });
+    if (!active.length) active = classes.slice(0, 1);
     return function (parcel) {
       var i = parcel[0], j = parcel[1], total = 0, cum = [];
       for (var k = 0; k < active.length; k++) {
-        var c = active[k];
-        var w = pv(c) * (0.2 + 1.6 * vnoise(i * 0.09 + k * 37.7, j * 0.09, seed + 100 + k));
-        w *= rare[c.id] != null ? rare[c.id] : 1;
+        var w = active[k].weight * (0.2 + 1.6 * vnoise(i * 0.09 + k * 37.7, j * 0.09, (active[k].id * 131 + 17) | 0));
         total += w; cum.push(total);
       }
-      var r = hash2(i, j, seed + 99) * total;
+      var r = hash2(i, j, 99) * total;
       for (var m = 0; m < cum.length; m++) if (r <= cum[m]) return active[m].id;
       return active[active.length - 1].id;
     };
@@ -825,11 +825,11 @@
       cellW: rad(bbox[2] - bbox[0]) * 6371000 / n, cellH: (yMax - yMin) / m * 6371000
     };
   }
-  /** Preview classification: each parcel gets a class of the season, following the engine's prevalence priors. */
-  function buildPreviewGrid(fc, classes, season, seed, opts) {
-    var pick = buildClassPicker(classes, season, seed);
+  /** Preview classification: each parcel gets a class, following the class
+   *  weights of the scheme/season (shares of the reference sample set). */
+  function buildPreviewGrid(fc, classes, seed, opts) {
+    var pick = buildClassPicker(classes);
     var res = rasterize(fc, function (parcel) { return pick(parcel); }, seed, opts);
-    res.season = season;
     return res;
   }
   /** k-means preview: the same raster, each parcel labelled with a spectral cluster 1..k (not a crop class). */

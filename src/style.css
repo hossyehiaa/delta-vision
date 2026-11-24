@@ -631,3 +631,126 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
 .ndvi-pop { min-width: 264px; }
 .ndvi-pop h4 { margin: 0 0 6px; font-size: .9rem; }
 .ndvi-pop p { margin: 6px 0 0; font-size: .75rem; color: var(--ink-2); }
+
+/* ------------------------------------------------------------------ two-level scheme UI */
+.level-seg { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.level-btn {
+  display: grid; gap: 2px; justify-items: start; text-align: start; cursor: pointer;
+  border: 1.5px solid var(--line); border-radius: var(--r-md); background: #fff; padding: 10px 14px;
+  transition: border-color .25s ease, background-color .25s ease, box-shadow .25s ease, transform .25s ease;
+  will-change: transform;
+}
+.level-btn b { font-size: .95rem; font-weight: 700; }
+.level-btn small { font-size: .74rem; color: var(--muted); font-weight: 500; }
+.level-btn:hover { transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.level-btn.is-on { border-color: var(--ink); background: var(--lime-soft); box-shadow: var(--shadow-sm); }
+.level-btn.is-on small { color: var(--ink-2); }
+#card-level .hint { margin-top: 10px; }
+
+#season-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#season-tabs .tab[disabled] { opacity: .4; cursor: not-allowed; }
+#season-tabs .tab[disabled]:hover { color: var(--ink-2); }
+.custom-range { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-top: 10px; }
+.custom-range .btn-row { grid-column: 1 / -1; }
+
+.season-badge { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+.season-badge span {
+  display: inline-flex; align-items: center; gap: 6px; font-size: .76rem; font-weight: 600;
+  border-radius: var(--r-pill); padding: 5px 11px; line-height: 1.25;
+}
+.sb-active { background: var(--lime-soft); color: var(--ink); }
+.sb-active::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--ok, #3e8f29); }
+.sb-excluded { background: #fbe9e7; color: #a13227; }
+.sb-excluded::before { content: "✕"; font-size: .7rem; font-weight: 700; }
+.sb-detected { background: #eaf1fb; color: #1f4e8c; }
+
+/* ------------------------------------------------------------------ map toolbar (two rows) */
+.map-toolbar { position: absolute; z-index: 1100; inset-inline: 10px; bottom: 10px; display: grid; gap: 6px; pointer-events: none; }
+.map-toolbar .map-tools { position: static; justify-content: space-between; flex-wrap: wrap; gap: 6px; animation: rise-in .35s ease both; }
+.map-toolbar .map-tools > * { pointer-events: auto; }
+.seg-icons button { display: grid; place-items: center; min-width: 38px; min-height: 34px; padding: 6px 9px; }
+.seg-icons .icon { width: 17px; height: 17px; }
+.seg-layers button { font-size: .76rem; }
+.seg-layers button.is-on { background: var(--ink); color: #fff; }
+.seg-layers button:not(.is-on) { opacity: .85; }
+.map-coords {
+  position: absolute; z-index: 1100; inset-inline-end: 12px; top: 10px;
+  background: rgba(21, 21, 21, 0.82); color: #fff; border-radius: var(--r-pill);
+  padding: 5px 12px; font-size: .74rem; letter-spacing: .02em; pointer-events: none;
+  animation: rise-in .3s ease both;
+}
+
+/* A/B wipe slider: clips the classification overlay left/right of the handle */
+.map-ab { position: absolute; z-index: 1150; inset-inline: 12px; bottom: 0; height: 26px; pointer-events: none; }
+.map-ab .ab-band { position: absolute; inset-inline: 0; top: 12px; height: 2px; background: rgba(255, 255, 255, 0.9); box-shadow: 0 0 4px rgba(0, 0, 0, 0.35); }
+.map-ab .ab-handle {
+  position: absolute; top: 0; left: 50%; width: 26px; height: 26px; transform: translateX(-50%);
+  border-radius: 50%; border: 2.5px solid #fff; background: var(--ink); color: #fff; cursor: ew-resize;
+  display: grid; place-items: center; pointer-events: auto; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+  transition: box-shadow .2s ease, transform .2s ease;
+}
+.map-ab .ab-handle::after { content: "↔"; font-size: 12px; line-height: 1; }
+.map-ab .ab-handle:hover, .map-ab .ab-handle:active { box-shadow: 0 0 0 6px rgba(255, 255, 255, 0.25); transform: translateX(-50%) scale(1.08); }
+[dir="rtl"] .map-ab .ab-handle { left: auto; }
+
+/* legend: clickable items + one-class detail strip */
+.legend { display: block; }
+.legend-items { display: flex; flex-wrap: wrap; gap: 6px 10px; }
+.legend-item {
+  display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); border: 0; background: none;
+  cursor: pointer; padding: 3px 7px; border-radius: var(--r-pill); font-size: .8rem;
+  transition: background-color .2s ease, color .2s ease, transform .2s ease;
+}
+.legend-item:hover { background: var(--panel); color: var(--ink); transform: translateY(-1px); }
+.legend-item.is-sel { background: var(--ink); color: #fff; }
+.legend-item small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.legend-item.is-sel small { color: rgba(255, 255, 255, 0.8); }
+.legend-detail { margin-top: 6px; font-size: .78rem; color: var(--ink-2); display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; }
+.legend-detail b { color: var(--ink); }
+.legend-detail[hidden] { display: none; }
+
+/* honest-accuracy insight */
+.insight-box {
+  display: grid; gap: 4px; margin-top: 12px; padding: 12px 14px; border-radius: var(--r-md);
+  background: var(--warn-soft, #fff6e5); border: 1px solid #eecf9a; color: #7a5b17; font-size: .84rem; line-height: 1.55;
+  animation: rise-in .4s ease both;
+}
+.insight-box b { font-size: .82rem; }
+
+/* run button: working state */
+#run-btn { position: relative; transition: transform .2s ease, box-shadow .2s ease, background-color .2s ease; }
+#run-btn:not([disabled]):hover { transform: translateY(-1px); box-shadow: var(--shadow); }
+#run-btn[disabled] { opacity: .75; cursor: progress; }
+#run-btn[disabled]::after {
+  content: ""; position: absolute; inset-inline-start: 14px; top: 50%; width: 14px; height: 14px; margin-top: -7px;
+  border-radius: 50%; border: 2px solid rgba(21, 21, 21, 0.25); border-top-color: var(--ink);
+  animation: spin .8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes rise-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* premium micro-interactions (transform/opacity only — GPU friendly) */
+.stat-card { animation: rise-in .45s ease both; }
+.stat-row .stat-card:nth-child(2) { animation-delay: .05s; }
+.stat-row .stat-card:nth-child(3) { animation-delay: .1s; }
+.stat-row .stat-card:nth-child(4) { animation-delay: .15s; }
+.dv-table tbody tr { transition: background-color .18s ease; }
+.dv-table tbody tr:hover { background: var(--panel); }
+.level-btn, .seg button, .legend-item, .tabs .tab { -webkit-tap-highlight-color: transparent; }
+.ws-results:not(:has(.empty)) .card-title { view-transition-name: none; }
+
+@media (max-width: 480px) {
+  #season-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .custom-range { grid-template-columns: minmax(0, 1fr); }
+  .map-toolbar .map-tools { justify-content: flex-start; }
+  .seg-icons button { min-width: 34px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stat-card, .map-toolbar .map-tools, .map-coords, .insight-box { animation: none; }
+  #run-btn[disabled]::after { animation-duration: 1.6s; }
+  .level-btn:hover, .legend-item:hover, #run-btn:not([disabled]):hover { transform: none; }
+  .map-ab .ab-handle:hover { transform: translateX(-50%); }
+}
+@media print {
+  .map-toolbar, .map-coords, .map-ab, .season-badge, .level-seg, .custom-range, .legend-detail, .insight-box { display: none !important; }
+}

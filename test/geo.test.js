@@ -193,26 +193,40 @@ const CLASSES = [
   ok(err && err.code === "CSV_EMPTY", "empty file → CSV_EMPTY");
 
   console.log("== 10. Preview grid");
+  // classes carry the class share of the reference set as the weight (the app
+  // passes D.SCHEMES[scheme].priors[family]); a compact stand-in here
+  const weighted = (w) => Object.keys(w).map((id) => ({ id: +id, weight: w[id] }));
+  const SEASON_WEIGHTS = {
+    // winter family: 9 active classes, wheat leads
+    winter: { 1: 0.5, 3: 0.12, 4: 0.12, 5: 0.07, 6: 0.07, 7: 0.07, 9: 0.05, 10: 0.05, 11: 0.02 },
+    // summer family: 8 active classes, maize leads
+    summer: { 2: 0.45, 5: 0.12, 6: 0.12, 7: 0.12, 8: 0.09, 9: 0.05, 10: 0.03, 11: 0.02 },
+    // full family: all 11, bare land leads
+    full: { 1: 0.12, 2: 0.12, 3: 0.08, 4: 0.12, 5: 0.05, 6: 0.07, 7: 0.08, 8: 0.06, 9: 0.2, 10: 0.06, 11: 0.04 }
+  };
   for (const season of ["winter", "summer", "full"]) {
-    const grid = G.buildPreviewGrid(set.featureCollection, CLASSES, season, 42);
+    const classes = weighted(SEASON_WEIGHTS[season]);
+    const grid = G.buildPreviewGrid(set.featureCollection, classes, 42);
     const shares = G.previewShares(grid);
     const gridArea = G.gridAreaM2(grid);
     console.log("     " + season.padEnd(6) + " " + grid.n + "×" + grid.m + " cells, " + grid.totalCells + " classified, " + shares.length + " classes, grid area " + G.m2ToFeddan(gridArea).toFixed(1) +
       " feddan vs " + G.m2ToFeddan(set.areaM2).toFixed(1) + "   top: " + shares.slice(0, 3).map((x) => x.classId + ":" + (x.share * 100).toFixed(1) + "%").join(" "));
     ok(Math.abs(gridArea / set.areaM2 - 1) < 0.03, season + ": grid area within 3% of the polygon area");
-    ok(Math.abs(shares.reduce((a, x) => a + x.share, 0) - 1) < 1e-9 && shares.every((x) => x.classId !== 2 && x.classId !== 3 || season !== "winter"), season + ": shares sum to 1, inactive classes absent");
-    const expected = season === "winter" ? [1, 4, 5, 6, 7, 9, 10, 11, 12] : season === "summer" ? [2, 3, 4, 5, 8, 9, 10, 11, 12] : CLASSES.map((c) => c.id);
-    ok(JSON.stringify(shares.map((x) => x.classId).sort((a, b) => a - b)) === JSON.stringify(expected), season + ": exactly the season-active classes appear");
-    const leader = { winter: 1, summer: 2, full: 10 }[season]; // full-year: the engine averages the seasonal priors, so fallow leads
-    ok(shares[0].classId === leader && shares[0].share > (season === "full" ? 1 / 12 : 0.18), season + ": largest class is " + leader + " (" + (shares[0].share * 100).toFixed(1) + "%)");
+    ok(Math.abs(shares.reduce((a, x) => a + x.share, 0) - 1) < 1e-9, season + ": shares sum to 1");
+    const expected = Object.keys(SEASON_WEIGHTS[season]).map(Number).sort((a, b) => a - b);
+    ok(JSON.stringify(shares.map((x) => x.classId).sort((a, b) => a - b)) === JSON.stringify(expected), season + ": exactly the weighted classes appear");
+    const leader = season === "winter" ? 1 : season === "summer" ? 2 : 9;
+    ok(shares[0].classId === leader && shares[0].share > 0.15, season + ": largest class is " + leader + " (" + (shares[0].share * 100).toFixed(1) + "%)");
+    ok(shares.every((x) => x.classId !== 2 && x.classId !== 8 || season !== "winter"), season + ": off-season Maize and Grapes absent from the winter grid");
   }
-  const g1 = G.buildPreviewGrid(set.featureCollection, CLASSES, "winter", 7), g2 = G.buildPreviewGrid(set.featureCollection, CLASSES, "winter", 7), g3 = G.buildPreviewGrid(set.featureCollection, CLASSES, "winter", 8);
+  const wcls = weighted(SEASON_WEIGHTS.winter);
+  const g1 = G.buildPreviewGrid(set.featureCollection, wcls, 7), g2 = G.buildPreviewGrid(set.featureCollection, wcls, 7), g3 = G.buildPreviewGrid(set.featureCollection, wcls, 8);
   ok(g1.grid.every((v, i) => v === g2.grid[i]) && g1.grid.some((v, i) => v !== g3.grid[i]), "deterministic for a seed, different across seeds");
-  ok(g1.grid.every((v) => v === 0 || (v >= 1 && v <= 12)) && g1.totalCells > 1000, "class ids in range; unclassified cells = 0");
+  ok(g1.grid.every((v) => v === 0 || (v >= 1 && v <= 11)) && g1.totalCells > 1000, "class ids in range; unclassified cells = 0");
   const sq = { type: "FeatureCollection", features: [{ type: "Feature", geometry: { type: "Polygon", coordinates: [REF.sq1km.ring] }, properties: {} }] };
-  const gsq = G.buildPreviewGrid(sq, CLASSES, "winter", 1, { cellM: 10 });
+  const gsq = G.buildPreviewGrid(sq, wcls, 1, { cellM: 10 });
   ok(Math.abs(G.gridAreaM2(gsq) / REF.sq1km.area_m2 - 1) < 0.03, "1 km² square: " + gsq.n + "×" + gsq.m + " grid → " + G.m2ToFeddan(G.gridAreaM2(gsq)).toFixed(3) + " feddan (true " + G.m2ToFeddan(REF.sq1km.area_m2).toFixed(3) + ")");
-  err = null; try { G.buildPreviewGrid(lines.featureCollection, CLASSES, "winter", 1); } catch (e) { err = e; }
+  err = null; try { G.buildPreviewGrid(lines.featureCollection, wcls, 1); } catch (e) { err = e; }
   ok(err && err.code === "NO_POLYGONS", "line layer → NO_POLYGONS");
 
   console.log("\n" + pass + " passed, " + fails.length + " failed" + (fails.length ? "\n  " + fails.join("\n  ") : ""));

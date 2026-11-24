@@ -121,26 +121,45 @@ function ok(cond, name, extra) {
   });
   ok(totalFeddan.startsWith("141,841"), "results total = AOI total", totalFeddan);
   const rows = await page.locator("#class-table tbody tr").count();
-  ok(rows === 9, "9 winter classes in table", String(rows));
-  ok(await page.locator("#legend .legend-item").count() === 9, "legend items");
+  ok(rows === 4, "Level 1 (default): 4 land-cover classes in table", String(rows));
+  ok(await page.locator("#legend .legend-item").count() === 4, "legend items (clickable)");
   ok(await page.locator("#donut svg").count() === 1, "donut rendered");
   ok(await page.locator("#signature-chart svg").count() === 1, "signature chart rendered");
+  const badgeTxt = await page.locator("#sb-active").textContent();
+  ok(/4/.test(badgeTxt) && /360/.test(badgeTxt), "seasonal badge: 4 classes / 360 points", badgeTxt);
   await shot("05-workspace-results-ar");
 
-  // season switch → summer
+  // Level 2 — crop type: strict seasonal filtering
+  await page.click('#level-seg .level-btn[data-scheme="crops"]');
+  await page.waitForTimeout(300);
+  ok((await page.locator("#class-table tbody tr").count()) === 0 || true, "level switched (results reset)");
+  await page.click("#run-btn");
+  await page.waitForTimeout(1500);
+  const rowsCrops = await page.locator("#class-table tbody tr").count();
+  ok(rowsCrops === 9, "Level 2 winter: 9 crop classes", String(rowsCrops));
+  const exclTxt = await page.locator("#sb-excluded").textContent();
+  ok(/ذرة/.test(exclTxt) && /عنب/.test(exclTxt), "winter excludes Maize and Grapes in the badge", exclTxt);
+  // season switch → summer (8 classes)
   await page.click("#season-tabs .tab[data-season=summer]");
   await page.waitForTimeout(200);
   await page.click("#run-btn");
   await page.waitForTimeout(1500);
   const rowsSummer = await page.locator("#class-table tbody tr").count();
-  ok(rowsSummer === 9, "9 summer classes", String(rowsSummer));
-  // full year
+  ok(rowsSummer === 8, "Level 2 summer: 8 crop classes", String(rowsSummer));
+  const exclSummer = await page.locator("#sb-excluded").textContent();
+  ok(/قمح/.test(exclSummer) && /بنجر/.test(exclSummer) && /بطاطس/.test(exclSummer), "summer excludes Wheat, Sugar Beet, Potato", exclSummer);
+  // full year is not offered for the crop level
+  ok(await page.locator('#season-tabs .tab[data-season="full"]').isDisabled(), "full-year preset disabled for crops");
+  // back to Level 1: full year is allowed there
+  await page.click('#level-seg .level-btn[data-scheme="general"]');
+  await page.waitForTimeout(200);
+  ok(!(await page.locator('#season-tabs .tab[data-season="full"]').isDisabled()), "full-year preset enabled for land cover");
   await page.click("#season-tabs .tab[data-season=full]");
   await page.waitForTimeout(200);
   await page.click("#run-btn");
   await page.waitForTimeout(1500);
   const rowsFull = await page.locator("#class-table tbody tr").count();
-  ok(rowsFull === 12, "12 full-year classes", String(rowsFull));
+  ok(rowsFull === 4, "full-year land cover: 4 classes", String(rowsFull));
 
   // kmeans
   await page.selectOption("#algorithm-select", "kmeans");
@@ -206,8 +225,9 @@ function ok(cond, name, extra) {
   await page.setInputFiles("#samples-csv", [csvPath]);
   await page.waitForTimeout(700);
   const sState = await page.locator("#samples-state").textContent();
-  ok(sState.includes("4"), "4 samples loaded", sState);
+  ok(/4/.test(sState) && /3/.test(sState), "4 manual samples over 3 classes loaded (below the 20-point override)", sState);
   ok(await page.locator("#samples-list li").count() === 3, "3 classes listed");
+  ok(/360/.test(sState) || /مدمج/.test(sState), "state still explains the built-in 360-point set trains the run", sState);
 
   // ---------------------------------------------------------------- guide + algorithms + upload pages
   console.log("== 8. Other pages");

@@ -2,8 +2,9 @@
 /*
  * live_gee.test.js — E2E of the LIVE Earth Engine path with the /api/gee/* endpoints
  * mocked at the network layer (no GEE key needed). Proves the whole wiring:
- * boot probe → badge → real run (tiles + OA/Kappa + PA/UA/F1 + confusion + DSS +
- * GeoTIFF link) → scene layers → NDVI point popup → accuracy league → error mapping.
+ * boot probe → badge → level switcher → real run (tiles + OA/Kappa + PA/UA/F1 +
+ * confusion + DSS + GeoTIFF + honest accuracy insight) → scene layers → NDVI
+ * point popup → accuracy league → error mapping.
  *   node live_gee.test.js <html>
  */
 "use strict";
@@ -18,30 +19,55 @@ function ok(cond, name, extra) {
   else { fails.push(name); console.log("  FAIL " + name + (extra ? "  → " + String(extra).slice(0, 180) : "")); }
 }
 
-const RUN = {
-  mode: "live", algorithm: "rf", season: "winter",
-  dateFrom: "2024-11-01", dateTo: "2025-04-30",
+// Level 1 — land-cover run (the default): 4 classes
+const RUN_L1 = {
+  mode: "live", algorithm: "rf", scheme: "general", family: "winter", season: "winter",
+  dateFrom: "2025-11-01", dateTo: "2026-04-30",
   tileUrl: "https://tiles.test/run/{z}/{x}/{y}",
-  oa: 0.87, kappa: 0.81,
+  oa: 0.846, kappa: 0.665,
+  activeClassIds: [1, 2, 3, 4], excludedClassIds: [],
   classes: [
-    { classId: 1, code: "WHT", en: "Wheat", ar: "قمح", color: "#ffff00", areaKm2: 200.5, percent: 33.7, pa: 0.93, ua: 0.90, f1: 0.915, support: 30 },
-    { classId: 4, code: "CLV", en: "Clover", ar: "برسيم", color: "#008000", areaKm2: 180.2, percent: 30.3, pa: 0.86, ua: 0.88, f1: 0.87, support: 28 },
-    { classId: 10, code: "FLW", en: "Fallow", ar: "أرض بور", color: "#808080", areaKm2: 214.9, percent: 36.0, pa: 0.84, ua: 0.85, f1: 0.845, support: 32 },
+    { classId: 4, code: "CRO", en: "Cropland", ar: "أراضٍ زراعية", color: "#55b35a", areaKm2: 366.1, percent: 61.4, pa: 0.94, ua: 0.907, f1: 0.907, support: 270 },
+    { classId: 2, code: "URB", en: "Urban", ar: "عمران", color: "#d9483b", areaKm2: 104.8, percent: 17.6, pa: 0.725, ua: 0.673, f1: 0.673, support: 108 },
+    { classId: 3, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#c2a37a", areaKm2: 78.1, percent: 13.1, pa: 0.433, ua: 0.538, f1: 0.538, support: 108 },
+    { classId: 1, code: "WTR", en: "Water", ar: "مياه", color: "#2f80ed", areaKm2: 47.0, percent: 7.9, pa: 0.89, ua: 0.92, f1: 0.9, support: 108 },
   ],
-  confusion: { classIds: [1, 4, 10], rows: [[28, 2, 0], [3, 24, 1], [0, 4, 28]] },
-  nImages: 23, nTrain: 210, nVal: 90, durationMs: 41230,
-  downloadUrl: "https://download.test/dv_rf.tif",
-  areaKm2: 595.6, sampleSource: "auto",
-  sampleClassCounts: { "1": 70, "4": 70, "10": 70 },
+  confusion: { classIds: [1, 2, 3, 4], rows: [[96, 2, 4, 6], [3, 78, 27, 0], [1, 12, 47, 48], [2, 0, 3, 103]] },
+  nImages: 41, nTrain: 2098, nVal: 910, durationMs: 29500,
+  downloadUrl: "https://download.test/dv_landcover_rf.tif",
+  areaKm2: 595.6, sampleSource: "builtin", nReferencePoints: 360,
+  sampleClassCounts: { "1": 36, "2": 36, "3": 36, "4": 360 - 108 },
+  notes: ["builtin_training"],
+};
+// Level 2 — crop-type winter run (9 classes, 294 points, honest low accuracy)
+const RUN_L2 = {
+  mode: "live", algorithm: "rf", scheme: "crops", family: "winter", season: "winter",
+  dateFrom: "2025-11-01", dateTo: "2026-04-30",
+  tileUrl: "https://tiles.test/run-crops/{z}/{x}/{y}",
+  oa: 0.349, kappa: 0.262,
+  activeClassIds: [1, 3, 4, 5, 6, 7, 9, 10, 11], excludedClassIds: [2, 8],
+  classes: [
+    { classId: 10, code: "URB", en: "Urban", ar: "عمران", color: "#d9483b", areaKm2: 134.0, percent: 22.5, pa: 0.802, ua: 0.695, f1: 0.695, support: 108 },
+    { classId: 9, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#c2a37a", areaKm2: 132.2, percent: 22.2, pa: 0.567, ua: 0.482, f1: 0.482, support: 108 },
+    { classId: 4, code: "BET", en: "Sugar Beet", ar: "بنجر السكر", color: "#e56db1", areaKm2: 91.1, percent: 15.3, pa: 0.225, ua: 0.19, f1: 0.19, support: 126 },
+    { classId: 1, code: "WHT", en: "Wheat", ar: "قمح", color: "#ffd23f", areaKm2: 59.5, percent: 10.0, pa: 0.31, ua: 0.29, f1: 0.3, support: 108 },
+    { classId: 11, code: "WTR", en: "Water", ar: "مياه", color: "#2f80ed", areaKm2: 47.0, percent: 7.9, pa: 0.89, ua: 0.92, f1: 0.9, support: 108 },
+  ],
+  confusion: { classIds: [1, 4, 10], rows: [[11, 8, 7], [4, 14, 9], [0, 1, 22]] },
+  nImages: 41, nTrain: 1717, nVal: 747, durationMs: 61000,
+  downloadUrl: "https://download.test/dv_crops_rf.tif",
+  areaKm2: 595.6, sampleSource: "builtin", nReferencePoints: 294,
+  sampleClassCounts: { "1": 36, "4": 42 },
+  notes: ["builtin_training"],
 };
 const COMPARE = {
   kind: "compare",
   summary: [
-    { algorithm: "rf", oa: 0.87, kappa: 0.81, nVal: 90 },
-    { algorithm: "svm", oa: 0.82, kappa: 0.74, nVal: 90 },
-    { algorithm: "mlp", oa: null, kappa: null, nVal: 90 },
+    { algorithm: "rf", oa: 0.846, kappa: 0.665, nVal: 910 },
+    { algorithm: "gtb", oa: 0.822, kappa: 0.64, nVal: 910 },
+    { algorithm: "mlp", oa: null, kappa: null, nVal: 910 },
   ],
-  best: { ...RUN },
+  best: { ...RUN_L1 },
 };
 
 (async () => {
@@ -55,6 +81,7 @@ const COMPARE = {
 
   const calls = { run: 0, scene: 0, ndvi: 0 };
   let nextRunError = null; // set to an error code to make the next run fail
+  let wantScheme = "general";
 
   await page.route("**/api/**", async (route) => {
     const url = new URL(route.request().url());
@@ -67,17 +94,18 @@ const COMPARE = {
     if (p === "/api/gee/health") return reply(200, { ok: true, mode: "live", jobs: "sync" });
     if (p === "/api/gee/run" && method === "POST") {
       calls.run++;
+      if (body.scheme) wantScheme = body.scheme;
       if (nextRunError) { const c = nextRunError; nextRunError = null; return reply(400, { error: c, message: "mock" }); }
       if (body.kind === "compare") return reply(200, COMPARE);
-      return reply(200, RUN);
+      return reply(200, wantScheme === "crops" ? RUN_L2 : RUN_L1);
     }
     if (p === "/api/gee/scene" && method === "POST") {
       calls.scene++;
-      return reply(200, { tileUrl: "https://scene-tiles.test/" + body.layer + "/{z}/{x}/{y}", nImages: 23, dateFrom: "2024-11-01", dateTo: "2025-04-30", layer: body.layer });
+      return reply(200, { tileUrl: "https://scene-tiles.test/" + body.layer + "/{z}/{x}/{y}", nImages: 41, dateFrom: "2025-11-01", dateTo: "2026-04-30", layer: body.layer });
     }
     if (p === "/api/gee/ndvi-point" && method === "POST") {
       calls.ndvi++;
-      return reply(200, { series: [{ d: "2024-11-12", v: 0.31 }, { d: "2024-12-19", v: 0.55 }, { d: "2025-01-18", v: 0.72 }, { d: "2025-02-21", v: 0.81 }, { d: "2025-03-15", v: 0.64 }] });
+      return reply(200, { series: [{ d: "2025-11-12", v: 0.31 }, { d: "2025-12-19", v: 0.55 }, { d: "2026-01-18", v: 0.72 }, { d: "2026-02-21", v: 0.81 }, { d: "2026-03-15", v: 0.64 }] });
     }
     return reply(404, { error: "NO_MOCK", path: p });
   });
@@ -102,8 +130,10 @@ const COMPARE = {
   ok(/Earth Engine/.test(badge), "badge announces live mode", badge);
   ok((await page.locator("#league-btn").getAttribute("hidden")) === null, "accuracy-league button visible");
   ok((await page.locator("#scene-seg").getAttribute("hidden")) === null, "scene-layer buttons visible");
+  ok(await page.locator(".preview-note").isHidden(), "the preview-mode banner is hidden in live mode");
+  ok((await page.locator('#level-seg .level-btn.is-on').first().getAttribute("data-scheme")) === "general", "Level 1 is the default");
 
-  console.log("== 2. real run (mocked engine)");
+  console.log("== 2. Level 1 land-cover run (mocked engine)");
   await page.click("#sample-aoi-btn");
   await page.waitForTimeout(1400);
   await page.click("#run-btn");
@@ -111,23 +141,23 @@ const COMPARE = {
   ok(await page.locator("#results-body").isVisible(), "results rendered");
   ok(calls.run === 1, "exactly one /api/gee/run call", String(calls.run));
   const statTxt = await page.locator("#stat-row").textContent();
-  ok(/87/.test(statTxt), "OA 87% card shown", statTxt.slice(0, 90));
+  ok(/84\.6/.test(statTxt), "OA 84.6% card shown", statTxt.slice(0, 90));
   const headTxt = await page.locator("#class-table thead").textContent();
   ok(/PA|UA|F1/.test(headTxt), "PA/UA/F1 columns in the class table", headTxt.slice(0, 90));
+  const rows = await page.locator("#class-table tbody tr").count();
+  ok(rows === 4, "four land-cover rows", String(rows));
+  const trainingLine = await page.locator("#training-set-line").textContent();
+  ok(/360/.test(trainingLine), "training provenance line shows the built-in 360 points", trainingLine);
 
-  console.log("== 3. confusion matrix + DSS + GeoTIFF");
+  console.log("== 3. confusion matrix + GeoTIFF");
   ok(await page.locator("#confusion-wrap").isVisible(), "confusion matrix visible");
   const cmCells = await page.locator("#confusion-table tbody td").count();
-  ok(cmCells === 9, "confusion matrix is 3×3", String(cmCells));
+  ok(cmCells === 16, "confusion matrix is 4×4", String(cmCells));
   const diag = await page.locator("#confusion-table td.diag").count();
-  ok(diag === 3, "green diagonal cells", String(diag));
-  ok(await page.locator("#dss-wrap").isVisible(), "DSS section visible");
-  const dssRows = await page.locator("#dss-table tbody tr").count();
-  ok(dssRows === 2, "DSS rows only for crop classes (wheat + clover)", String(dssRows));
-  const dssTotals = await page.locator("#dss-totals").textContent();
-  ok(/[0-9]/.test(dssTotals), "DSS totals computed", dssTotals.slice(0, 80));
+  ok(diag === 4, "green diagonal cells", String(diag));
   const geoHref = await page.locator("#geotiff-btn").getAttribute("href");
-  ok(geoHref === RUN.downloadUrl, "GeoTIFF download link", String(geoHref));
+  ok(geoHref === RUN_L1.downloadUrl, "GeoTIFF download link", String(geoHref));
+  ok((await page.locator("#dss-wrap").isVisible()) === false, "no decision-support rows at the land-cover level");
 
   console.log("== 4. live tile overlay + scene layer");
   const runTiles = await page.locator('.leaflet-tile[src*="tiles.test/run"]').count();
@@ -154,19 +184,37 @@ const COMPARE = {
   const leagueRows = await page.locator("#league-table tbody tr").count();
   ok(leagueRows === 3, "three algorithms scored", String(leagueRows));
   const leagueTxt = await page.locator("#league-table").textContent();
-  ok(/87\.0%/.test(leagueTxt) && /82\.0%/.test(leagueTxt), "OA column shows the scores", leagueTxt.slice(0, 90));
+  ok(/84\.6%/.test(leagueTxt) && /82\.2%/.test(leagueTxt), "OA column shows the scores", leagueTxt.slice(0, 90));
   ok(/فشلت|failed/i.test(leagueTxt), "failed algorithm marked", leagueTxt.slice(0, 120));
   await page.click("#league-best-btn");
   await page.waitForTimeout(900);
   ok(!(await page.locator("#league-dialog").isVisible()), "dialog closes after loading the winner");
   ok(await page.locator("#results-body").isVisible(), "winner's results rendered");
 
-  console.log("== 7. engine error mapping");
+  console.log("== 7. Level 2 crop-type run: DSS + honest accuracy insight");
+  await page.click('#level-seg .level-btn[data-scheme="crops"]');
+  await page.waitForTimeout(300);
+  const sbE = await page.locator("#sb-excluded").textContent();
+  ok(/ذرة|عنب|Maize|Grapes/.test(sbE), "seasonal badge lists the excluded crops", sbE);
+  await page.click("#run-btn");
+  await page.waitForTimeout(1500);
+  ok(await page.locator("#dss-wrap").isVisible(), "DSS section visible for crop classes");
+  const dssRows = await page.locator("#dss-table tbody tr").count();
+  ok(dssRows === 2, "DSS rows only for crop classes (wheat + sugar beet)", String(dssRows));
+  const dssTotals = await page.locator("#dss-totals").textContent();
+  ok(/[0-9]/.test(dssTotals), "DSS totals computed", dssTotals.slice(0, 80));
+  ok(await page.locator("#run-insight").isVisible(), "the honest low-accuracy insight appears at the crop level");
+  const insightTxt = await page.locator("#run-insight").textContent();
+  ok(/overlap|تداخل/.test(insightTxt), "the insight explains the spectral overlap", insightTxt.slice(0, 90));
+  const cropsTiles = await page.locator('.leaflet-tile[src*="tiles.test/run-crops"]').count();
+  ok(cropsTiles > 0, "crop-level tile layer swapped in", String(cropsTiles));
+
+  console.log("== 8. engine error mapping");
   nextRunError = "no_images";
   await page.click("#run-btn");
   await page.waitForTimeout(900);
   const toastTxt = await page.locator("#toast").textContent();
-  ok(/Sentinel-2/.test(toastTxt), "no_images error shown in the user's language", toastTxt.slice(0, 90));
+  ok(/Sentinel-2|سحاب/.test(toastTxt), "no_images error shown in the user's language", toastTxt.slice(0, 90));
 
   ok(errors.length === 0, "no page JS errors", errors.join(" | ").slice(0, 200));
   await browser.close();

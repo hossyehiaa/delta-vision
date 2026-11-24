@@ -1,9 +1,14 @@
 /* POST /api/gee/run — real Earth Engine classification (the Basira pipeline).
  *
- * Body (Delta Vision frontend shape; Basira-style top-level params also accepted):
- *   { kind: "run" | "compare", algorithm, season, year?, dateFrom?, dateTo?,
- *     cloudMax?, params?: { rfTrees, kClusters, knnK, mlpHidden, mlpEpochs },
+ * Body (Delta Vision frontend shape):
+ *   { kind: "run" | "compare", scheme: "general" | "crops", algorithm, season, year?,
+ *     dateFrom?, dateTo?, cloudMax?, params?: { rfTrees, kClusters, knnK, mlpHidden, mlpEpochs },
  *     samplePoints?: [{ classId, lon, lat }], aoiGeo?, aoiName? }
+ *
+ * scheme "general" (default) = Level 1 land cover (4 classes);
+ * scheme "crops" = Level 2 crop type (11 classes, seasonally filtered:
+ * winter family Nov-Apr/Oct-Jan/Feb-May keeps 9 classes, summer family
+ * May-Oct/Jun-Sep keeps 8 — out-of-season crops never mix).
  *
  * kind "run"     → answers with the RunResult itself (tileUrl, oa, kappa, classes…)
  * kind "compare" → { kind: "compare", summary: [{algorithm, oa, kappa}], best: RunResult }
@@ -19,14 +24,20 @@ function num(v, def) {
   return Number.isFinite(n) ? n : def;
 }
 
+/** period presets accepted by the engine (see resolvePeriod) */
+const SEASONS = [
+  "winter", "early_winter", "late_winter", "summer", "summer_peak", "full", "custom",
+];
+
 /** Accept the frontend's { params: { … } } bundle and/or Basira-style flat keys. */
 function normalize(body) {
   const p = (body && typeof body.params === "object" && body.params) || {};
   const aoiGeo = body.aoiGeo;
   return {
     kind: body.kind === "compare" ? "compare" : "run",
+    scheme: body.scheme === "crops" ? "crops" : "general",
     algorithm: body.algorithm,
-    season: body.season || "winter",
+    season: SEASONS.indexOf(body.season) >= 0 ? body.season : "winter",
     year: body.year ? num(body.year, undefined) : undefined,
     dateFrom: body.dateFrom || undefined,
     dateTo: body.dateTo || undefined,

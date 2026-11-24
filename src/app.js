@@ -18,8 +18,11 @@
   // ---------------------------------------------------------------- state
   var state = {
     lang: I.lang(),
-    season: "winter",
+    scheme: I.DEFAULT_SCHEME,   // "general" = Level 1 land cover, "crops" = Level 2 crop type
+    season: I.DEFAULT_SEASON,
     year: I.DEFAULT_YEAR,
+    customFrom: null,           // custom date range (season === "custom")
+    customTo: null,
     algorithm: I.DEFAULT_ALGORITHM,
     params: I.defaults(),
     aoi: null,        // { kind, name, fc, areaM2, parcels:[{name, areaM2}], crsLabel, warnings, encoding }
@@ -28,24 +31,58 @@
     secondUnit: "km2",
     drawing: null,    // { mode:"poly"|"rect", points:[], first }
     picking: false,
+    layers: { overlay: true, gt: false, aoi: true, ab: false },
+    abSplit: 50,      // A/B wipe position (percent)
     gee: { checked: false, live: false, url: null }  // real Earth Engine backend on the server
   };
-  // Indicative Egyptian agronomy per class code (tons/feddan, m³/feddan) — the same
-  // decision-support table the Basira engine uses (northern Delta / coastal belt).
+  // Indicative Egyptian agronomy per class code (tons/feddan, m³/feddan) —
+  // PLANNING figures for the decision-support panel, labelled as indicative
+  // in the UI; not measurements. Medicinal plants are too heterogeneous to
+  // carry a figure and are omitted on purpose.
   var CROP_DSS = {
     WHT: { yieldTFed: 2.8, waterM3Fed: 1900 }, MZE: { yieldTFed: 3.2, waterM3Fed: 3100 },
-    RIC: { yieldTFed: 4.2, waterM3Fed: 7200 }, CLV: { yieldTFed: 25, waterM3Fed: 3600 },
     POT: { yieldTFed: 11, waterM3Fed: 3000 }, BET: { yieldTFed: 20, waterM3Fed: 3300 },
-    FBA: { yieldTFed: 1.2, waterM3Fed: 1900 }, SUN: { yieldTFed: 1.4, waterM3Fed: 2600 },
-    ORC: { yieldTFed: 8.5, waterM3Fed: 6500 }
+    VEG: { yieldTFed: 10, waterM3Fed: 3000 }, CIT: { yieldTFed: 10, waterM3Fed: 5500 },
+    GRP: { yieldTFed: 8, waterM3Fed: 4500 }
   };
-  try { var p = JSON.parse(localStorage.getItem(KEY_PREFS) || "{}"); if (p) { ["season","year","algorithm","secondUnit"].forEach(function (k) { if (p[k] != null) state[k] = p[k]; }); if (p.params) state.params = p.params; } } catch (e) { /* ignore */ }
+  try { var p = JSON.parse(localStorage.getItem(KEY_PREFS) || "{}"); if (p) { ["scheme","season","year","algorithm","secondUnit"].forEach(function (k) { if (p[k] != null) state[k] = p[k]; }); if (p.params) state.params = p.params; if (p.customFrom) state.customFrom = p.customFrom; if (p.customTo) state.customTo = p.customTo; } } catch (e) { /* ignore */ }
+  if (state.season === "custom" && !(state.customFrom && state.customTo)) state.season = I.DEFAULT_SEASON;
   function savePrefs() {
-    try { localStorage.setItem(KEY_PREFS, JSON.stringify({ season: state.season, year: state.year, algorithm: state.algorithm, params: state.params, secondUnit: state.secondUnit })); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(KEY_PREFS, JSON.stringify({ scheme: state.scheme, season: state.season, year: state.year, algorithm: state.algorithm, params: state.params, secondUnit: state.secondUnit, customFrom: state.customFrom, customTo: state.customTo })); } catch (e) { /* ignore */ }
   }
   var $ = function (sel) { return document.querySelector(sel); };
   var $$ = function (sel) { return Array.prototype.slice.call(document.querySelectorAll(sel)); };
-  var el = function (tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
+
+  // ---------------------------------------------------------------- scheme / period helpers
+  /** the run's scheme: "general" (Level 1) or "crops" (Level 2) */
+  function currentScheme() { return state.scheme === "crops" ? "crops" : "general"; }
+  /** season family of the selected period (presets carry theirs; custom detects) */
+  function currentFamily() { return I.seasonFamily(state.season, state.customFrom, state.customTo); }
+  /** the period the engine resolves for the current selection */
+  function currentPeriod() {
+    if (state.season === "custom") return { dateFrom: state.customFrom, dateTo: state.customTo };
+    return I.period(state.season, state.year);
+  }
+  /** classes of the current scheme that compete in the current season family */
+  function currentActiveClasses() { return I.activeClasses(currentScheme(), currentFamily()); }
+  function classById(id, scheme) { return I.classById(id, scheme == null ? currentScheme() : scheme); }
+  /** manual sample points keep their own scheme's ids — resolve the class for
+   *  display from either level (crop ids are valid at Level 2, 1–4 at Level 1) */
+  function sampleClass(id) { return I.classById(id, currentScheme()) || I.classById(id, currentScheme() === "crops" ? "general" : "crops"); }
+  /** class display name in the active language */
+  function className(c) { return c ? (state.lang === "ar" ? c.ar : c.en) : ""; }
+  /** map a crop-type class id to the current scheme (Level 1 rolls crops up) */
+  function mapClassId(id) {
+    if (currentScheme() !== "general") return id;
+    var crops = I.classesOf("crops");
+    for (var i = 0; i < crops.length; i++) if (crops[i].id === id) {
+      // crop ids 1..8 are cropland (4); 9/10/11 map to bare/urban/water (3/2/1)
+      if (id >= 9) return ({ 9: 3, 10: 2, 11: 1 })[id];
+      return 4;
+    }
+    return id;
+  }
+  function el(tag, cls, text) { var e = document.createElement(tag); if (cls) e.className = cls; if (text != null) e.textContent = text; return e; };
   var esc = function (s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
   var t = function (path, vars) { return I.t(path, vars); };
   var fmt = I.fmt;
@@ -269,6 +306,7 @@
     I.setLang(state.lang);
     applyTranslations();
     renderNavAuth(); renderHome(); renderWorkspaceChrome(); renderAlgorithmPage(); renderUploadPage(); renderGuidePage(); applyModeBadge();
+    observeReveals();   // re-rendered .reveal nodes are new elements — observe them again
     toast(state.lang === "ar" ? "تم التبديل إلى العربية" : "Switched to English");
   }
 
@@ -369,18 +407,27 @@
 
   // ---------------------------------------------------------------- the map
   var map = null, aoiLayer = null, samplesLayer = null, overlayLayer = null, drawLayer = null, sceneLayer = null, sceneActive = null;
-  var basemaps = null, activeBasemap = "satellite";
+  var gtLayer = null, basemaps = null, activeBasemap = "satellite", hybridLabels = null, abOn = false;
   function initMap() {
     if (map) return;
     var Esri_WorldImagery = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, attribution: "Imagery &copy; Esri, Maxar, Earthstar Geographics" });
     var OSM = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: "&copy; OpenStreetMap contributors" });
-    basemaps = { satellite: Esri_WorldImagery, streets: OSM };
-    map = L.map("map", { center: [30.9, 29.85], zoom: 8, zoomControl: true, worldCopyJump: true });
+    var CartoDark = L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", { maxZoom: 20, subdomains: "abcd", attribution: "&copy; OpenStreetMap contributors &copy; CARTO" });
+    hybridLabels = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}", { maxZoom: 19, pane: "shadowPane" });
+    basemaps = { satellite: Esri_WorldImagery, streets: OSM, dark: CartoDark, hybrid: Esri_WorldImagery };
+    map = L.map("map", { center: [30.9, 29.85], zoom: 8, zoomControl: true, worldCopyJump: true, fullscreenControl: false });
     basemaps[activeBasemap].addTo(map);
     aoiLayer = L.layerGroup().addTo(map);
     samplesLayer = L.layerGroup().addTo(map);
     drawLayer = L.layerGroup().addTo(map);
+    gtLayer = L.layerGroup();          // ground-truth reference points — toggled
     map.on("click", onMapClick);
+    map.on("mousemove", function (ev) {
+      var box = $("#map-coords"); if (!box) return;
+      box.hidden = false;
+      box.textContent = ev.latlng.lat.toFixed(5) + ", " + ev.latlng.lng.toFixed(5);
+    });
+    map.on("mouseout", function () { var box = $("#map-coords"); if (box) box.hidden = true; });
     $$("#basemap-seg button").forEach(function (b) {
       b.addEventListener("click", function () {
         activeBasemap = b.getAttribute("data-basemap");
@@ -389,7 +436,9 @@
           var isBase = Object.keys(basemaps).some(function (k) { return basemaps[k] === l; });
           if (isBase) map.removeLayer(l);
         });
+        if (hybridLabels) map.removeLayer(hybridLabels);
         basemaps[activeBasemap].addTo(map);
+        if (activeBasemap === "hybrid") hybridLabels.addTo(map);
         $$("#basemap-seg button").forEach(function (x) { x.classList.toggle("is-on", x === b); });
       });
     });
@@ -400,7 +449,112 @@
       if (overlayLayer) overlayLayer.setOpacity(parseFloat(this.value));
     });
     $("#fit-btn").addEventListener("click", fitAoi);
+    $("#fullscreen-btn").addEventListener("click", toggleFullscreen);
+    $("#reset-aoi-btn").addEventListener("click", loadSampleAoi);
+    $("#geojson-btn").addEventListener("click", function () { $("#geojson-input").click(); });
+    $("#geojson-input").addEventListener("change", function () {
+      if (!this.files || !this.files.length) return;
+      var file = this.files[0];
+      file.text().then(loadGeoJson, function () { toast(t("errors.BAD_GEOJSON"), true); });
+      this.value = "";
+    });
+    $$("#layer-toggles button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var layer = b.getAttribute("data-layer");
+        var on = layer in state.layers ? !state.layers[layer] : !b.classList.contains("is-on");
+        setLayerToggle(layer, on);
+      });
+    });
+    initAbSlider();
     map.on("keypress", function (ev) { if (ev.originalEvent.key === "Escape") endDrawing(false); });
+  }
+  function toggleFullscreen() {
+    var wrap = $("#map-wrap") || $("#map").parentNode;
+    if (!document.fullscreenElement) {
+      (wrap.requestFullscreen || wrap.webkitRequestFullscreen || function () {}).call(wrap);
+    } else {
+      (document.exitFullscreen || document.webkitExitFullscreen || function () {}).call(document);
+    }
+    setTimeout(function () { if (map) map.invalidateSize(); }, 300);
+  }
+  function setLayerToggle(layer, on) {
+    state.layers[layer] = on;
+    var btn = document.querySelector('#layer-toggles button[data-layer="' + layer + '"]');
+    if (btn) btn.classList.toggle("is-on", !!on);
+    if (layer === "overlay") {
+      if (overlayLayer) { if (on) overlayLayer.addTo(map); else map.removeLayer(overlayLayer); }
+    } else if (layer === "aoi") {
+      if (aoiLayer) { if (on) aoiLayer.addTo(map); else map.removeLayer(aoiLayer); }
+    } else if (layer === "gt") {
+      if (on) { buildGroundTruthLayer(); gtLayer.addTo(map); } else map.removeLayer(gtLayer);
+    } else if (layer === "ab") {
+      setAbMode(on);
+    }
+  }
+  /** the 360 built-in reference points, coloured by their class in the current scheme */
+  function buildGroundTruthLayer() {
+    gtLayer.clearLayers();
+    var pts = (D.REFERENCE_POINTS && D.REFERENCE_POINTS.points) || [];
+    var scheme = currentScheme();
+    pts.forEach(function (p) {
+      var id = scheme === "crops" ? p[0] : mapClassId(p[0]);
+      var c = classById(id, scheme);
+      if (!c) return;
+      var mark = L.circleMarker([p[2], p[1]], { radius: 3.5, color: "#ffffff", weight: 0.8, fillColor: c.color, fillOpacity: 0.95 });
+      mark.bindTooltip(className(c) + " (" + c.code + ")", { direction: "top" });
+      gtLayer.addLayer(mark);
+    });
+  }
+  // ---------------------------------------------------------------- A/B wipe slider
+  function initAbSlider() {
+    var slider = $("#ab-slider"), handle = $("#ab-handle");
+    if (!slider || !handle) return;
+    var dragging = false;
+    function pos(ev) {
+      var rect = slider.getBoundingClientRect();
+      var x = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
+      var pct = Math.max(0, Math.min(100, (x / rect.width) * 100));
+      state.abSplit = pct;
+      applyAbSplit();
+    }
+    handle.addEventListener("mousedown", function (ev) { dragging = true; ev.preventDefault(); });
+    slider.addEventListener("mousedown", function (ev) { dragging = true; pos(ev); });
+    window.addEventListener("mousemove", function (ev) { if (dragging) pos(ev); });
+    window.addEventListener("mouseup", function () { dragging = false; });
+    handle.addEventListener("touchstart", function (ev) { dragging = true; pos(ev); }, { passive: true });
+    window.addEventListener("touchmove", function (ev) { if (dragging) pos(ev); }, { passive: true });
+    window.addEventListener("touchend", function () { dragging = false; });
+    applyAbSplit();
+  }
+  function setAbMode(on) {
+    abOn = !!on;
+    var slider = $("#ab-slider");
+    if (slider) slider.hidden = !abOn || !overlayLayer;
+    applyAbSplit();
+  }
+  function applyAbSplit() {
+    var slider = $("#ab-slider"), handle = $("#ab-handle");
+    if (handle) {
+      handle.style.left = state.abSplit + "%";
+      handle.setAttribute("aria-valuenow", Math.round(state.abSplit));
+    }
+    if (slider) slider.setAttribute("data-ab", abOn ? "on" : "off");
+    var el = abTargetElement();
+    if (!el) return;
+    if (abOn && overlayLayer) {
+      var rtl = I.dir() === "rtl";
+      var pct = rtl ? 100 - state.abSplit : state.abSplit;
+      el.style.clipPath = "inset(0 0 0 " + pct + "%)";
+      el.style.webkitClipPath = "inset(0 0 0 " + pct + "%)";
+    } else {
+      el.style.clipPath = "";
+      el.style.webkitClipPath = "";
+    }
+  }
+  function abTargetElement() {
+    if (!overlayLayer) return null;
+    if (overlayLayer.getContainer) { var c = overlayLayer.getContainer(); if (c) return c; }
+    return overlayLayer._image || null;
   }
   function fitAoi() {
     if (!state.aoi) return;
@@ -448,14 +602,38 @@
       return;
     }
     var items = state.results.classes;
+    var lgWrap = el("div", "legend-items");
     items.forEach(function (c) {
-      var it = el("span", "legend-item");
+      var it = el("button", "legend-item");
+      it.type = "button";
       it.appendChild(el("span", "swatch"));
       it.lastChild.style.background = c.color;
       it.appendChild(el("span", null, c.name));
-      if (c.percent != null) it.appendChild(el("small", null, fmt(c.percent, 1) + "%"));
-      lg.appendChild(it);
+      if (c.percent != null) it.appendChild(el("small", "num", fmt(c.percent, 1) + "%"));
+      it.addEventListener("click", function () {
+        $$("#legend .legend-item").forEach(function (x) { x.classList.remove("is-sel"); });
+        it.classList.add("is-sel");
+        legendDetail(c);
+      });
+      lgWrap.appendChild(it);
     });
+    lg.appendChild(lgWrap);
+    var det = el("div", "legend-detail"); det.id = "legend-detail";
+    lg.appendChild(det);
+  }
+  /** one-class detail strip under the legend (click a legend item) */
+  function legendDetail(c) {
+    var box = $("#legend-detail"); if (!box) return;
+    box.innerHTML = "";
+    box.hidden = false;
+    box.appendChild(el("b", null, c.name));
+    var parts = [];
+    parts.push(t("units.feddan") + " " + feddan(c.areaM2));
+    if (c.percent != null) parts.push(fmt(c.percent, 1) + "%");
+    if (c.pa != null) parts.push("PA " + fmt(c.pa * 100, 1) + "%");
+    if (c.ua != null) parts.push("UA " + fmt(c.ua * 100, 1) + "%");
+    if (c.support) parts.push("n=" + fmt(c.support, 0));
+    box.appendChild(el("span", "num", parts.join(" · ")));
   }
 
   // ---------------------------------------------------------------- AOI: shapefile upload
@@ -605,6 +783,29 @@
     toast(t("ws.upload.applied"));
   }
 
+  /** Parse an uploaded GeoJSON file into an AOI (polygons / multipolygons). */
+  function loadGeoJson(text) {
+    var data;
+    try { data = JSON.parse(text); } catch (e) { throw G.fail("BAD_GEOJSON"); }
+    var fc = data && data.type === "FeatureCollection" ? data
+      : data && (data.type === "Feature") ? { type: "FeatureCollection", features: [data] }
+      : data && (data.type === "Polygon" || data.type === "MultiPolygon") ? { type: "FeatureCollection", features: [{ type: "Feature", properties: {}, geometry: data }] }
+      : null;
+    if (!fc || !Array.isArray(fc.features) || !fc.features.length) throw G.fail("BAD_GEOJSON");
+    var area = 0, parcels = [];
+    fc.features.forEach(function (f, i) {
+      var g = f.geometry;
+      if (g && (g.type === "Polygon" || g.type === "MultiPolygon")) {
+        var a = G.geometryAreaM2(g);
+        area += a;
+        parcels.push({ name: (f.properties && (f.properties.name || f.properties.NAME)) || ("#" + (i + 1)), areaM2: a, properties: f.properties || {} });
+      }
+    });
+    if (!parcels.length) throw G.fail("BAD_GEOJSON");
+    setAoi({ kind: "geojson", name: t("ws.aoi.kinds.geojson"), fc: fc, areaM2: area, parcels: parcels, crsLabel: "WGS84", warnings: [] });
+    toast(t("ws.upload.applied"));
+  }
+
   function startDrawing(mode) {
     state.drawing = { mode: mode, points: [] };
     drawLayer.clearLayers();
@@ -738,9 +939,21 @@
 
   // ---------------------------------------------------------------- season / algorithm / params UI
   function renderWorkspaceChrome() {
-    // season tabs
+    // classification level (Level 1 land cover / Level 2 crop type)
+    $$("#level-seg .level-btn").forEach(function (b) {
+      var on = b.getAttribute("data-scheme") === currentScheme();
+      b.classList.toggle("is-on", on);
+      b.setAttribute("aria-selected", String(on));
+    });
+    $("#level-hint").textContent = currentScheme() === "general" ? t("ws.level.generalHint") : t("ws.level.cropsHint");
+
+    // season / period preset tabs
     $$("#season-tabs .tab").forEach(function (b) {
-      b.classList.toggle("is-on", b.getAttribute("data-season") === state.season);
+      var key = b.getAttribute("data-season");
+      b.classList.toggle("is-on", key === state.season);
+      // the full-year preset exists for the land-cover level only
+      b.disabled = key === "full" && currentScheme() === "crops";
+      b.title = b.disabled ? t("ws.season.fullNote") : "";
     });
     var yearSel = $("#year-select");
     if (!yearSel.options.length) {
@@ -748,6 +961,17 @@
       yearSel.addEventListener("change", function () { state.year = parseInt(yearSel.value, 10); updateSeasonInfo(); savePrefs(); });
     }
     yearSel.value = String(state.year);
+
+    // custom range
+    var cf = $("#custom-from"), ct = $("#custom-to");
+    if (cf && !cf._wired) {
+      cf._wired = ct._wired = true;
+      cf.addEventListener("change", function () { state.customFrom = cf.value || null; });
+      ct.addEventListener("change", function () { state.customTo = ct.value || null; });
+    }
+    if (cf) { cf.value = state.customFrom || ""; ct.value = state.customTo || ""; }
+    var clearBtn = $("#custom-clear");
+    if (clearBtn) clearBtn.hidden = state.season !== "custom";
 
     // algorithm select
     var algoSel = $("#algorithm-select");
@@ -768,10 +992,42 @@
   }
 
   function updateSeasonInfo() {
-    var per = I.period(state.season, state.year);
-    $("#season-period").textContent = t("ws.season.period", { from: per.dateFrom, to: per.dateTo });
-    var act = I.activeClasses(state.season);
-    var names = act.map(function (c) { return state.lang === "ar" ? c.ar : c.en; });
+    var per = currentPeriod();
+    $("#season-period").textContent = state.season === "custom"
+      ? t("ws.season.period", { from: per.dateFrom || "—", to: per.dateTo || "—" })
+      : t("ws.season.period", { from: per.dateFrom, to: per.dateTo });
+    var family = currentFamily();
+    var act = currentActiveClasses();
+    var names = act.map(function (c) { return className(c); });
+
+    // the seasonal-filter badge: active classes + point counts vs excluded classes
+    var pts = 0;
+    if (D.REFERENCE_POINTS && D.REFERENCE_POINTS.points) {
+      var activeIds = act.map(function (c) { return c.id; });
+      D.REFERENCE_POINTS.points.forEach(function (p) {
+        var id = currentScheme() === "crops" ? p[0] : mapClassId(p[0]);
+        if (activeIds.indexOf(id) >= 0) pts++;
+      });
+    }
+    var badge = $("#season-badge");
+    if (badge) {
+      badge.hidden = false;
+      var sbA = $("#sb-active");
+      sbA.textContent = t("ws.season.badgeActive", { n: act.length, points: fmt(pts, 0) });
+      var sbE = $("#sb-excluded");
+      if (currentScheme() === "crops") {
+        var excluded = I.classesOf("crops").filter(function (c) { return c.family !== "all" && c.family !== "both" && c.family !== family; });
+        sbE.hidden = !excluded.length;
+        sbE.textContent = excluded.length
+          ? t("ws.season.badgeExcluded", { classes: excluded.map(function (c) { return className(c); }).join(state.lang === "ar" ? "، " : ", ") })
+          : "";
+      } else sbE.hidden = true;
+      var sbD = $("#sb-detected");
+      sbD.hidden = state.season !== "custom";
+      if (state.season === "custom") sbD.textContent = t("ws.season.detected", { family: t("ws.season.family." + family) });
+    }
+    var fullNote = $("#season-full-note");
+    if (fullNote) fullNote.hidden = !(currentScheme() === "crops" && state.season === "full");
     $("#season-competing").textContent = t("ws.season.competing", { classes: names.join(" · ") });
   }
 
@@ -814,24 +1070,30 @@
   // ---------------------------------------------------------------- samples
   function resolveClassId(raw) {
     var s = String(raw).trim();
-    if (/^\d+$/.test(s)) { var n = parseInt(s, 10); var c = I.classById(n); return c ? c.id : null; }
+    if (/^\d+$/.test(s)) {
+      var n = parseInt(s, 10);
+      return (I.classById(n, "crops") || I.classById(n, "general")) ? n : null;
+    }
     var up = s.toUpperCase();
-    for (var i = 0; i < I.CLASSES.length; i++) if (I.CLASSES[i].code === up) return I.CLASSES[i].id;
-    for (var j = 0; j < I.CLASSES.length; j++) {
-      if (I.CLASSES[j].en.toLowerCase() === s.toLowerCase() || I.CLASSES[j].ar === s) return I.CLASSES[j].id;
+    for (var sch = 0; sch < 2; sch++) {
+      var list = I.classesOf(sch === 0 ? "crops" : "general");
+      for (var i = 0; i < list.length; i++) if (list[i].code === up) return list[i].id;
+      for (var j = 0; j < list.length; j++) {
+        if (list[j].en.toLowerCase() === s.toLowerCase() || list[j].ar === s) return list[j].id;
+      }
     }
     return null;
   }
 
-  function activeIds() { return I.activeClasses(state.season).map(function (c) { return c.id; }); }
+  function activeIds() { return currentActiveClasses().map(function (c) { return c.id; }); }
 
   function addSamplePoint(latlng) {
     if (!state.picking) return;
     var classId = parseInt($("#sample-class").value, 10);
-    var c = I.classById(classId);
+    var c = classById(classId) || sampleClass(classId);
     state.samples.push({ lon: latlng.lng, lat: latlng.lat, classId: classId });
     var mark = L.circleMarker(latlng, { radius: 6, color: "#151515", weight: 1.5, fillColor: c.color, fillOpacity: 1 });
-    mark.bindTooltip(c.code + " · " + (state.lang === "ar" ? c.ar : c.en));
+    mark.bindTooltip(c.code + " · " + className(c));
     mark.on("click", function (ev) {
       L.DomEvent.stopPropagation(ev);
       var idx = -1;
@@ -851,11 +1113,12 @@
     if (!keys.length) { list.hidden = true; list.innerHTML = ""; updateSamplesState(); return; }
     list.hidden = false; list.innerHTML = "";
     keys.forEach(function (id) {
-      var c = I.classById(id);
+      var c = sampleClass(id);
+      if (!c) return;
       var li = el("li", null);
       li.appendChild(el("span", "swatch"));
       li.lastChild.style.background = c.color;
-      li.appendChild(el("span", "name", (state.lang === "ar" ? c.ar : c.en) + " (" + c.code + ")"));
+      li.appendChild(el("span", "name", className(c) + " (" + c.code + ")"));
       li.appendChild(el("span", "n", String(byClass[id])));
       var rm = el("button", null);
       rm.type = "button";
@@ -874,7 +1137,8 @@
   function refreshSampleMarkers() {
     samplesLayer.clearLayers();
     state.samples.forEach(function (s) {
-      var c = I.classById(s.classId);
+      var c = sampleClass(s.classId);
+      if (!c) return;
       var mark = L.circleMarker([s.lat, s.lon], { radius: 6, color: "#151515", weight: 1.5, fillColor: c.color, fillOpacity: 1 });
       s._marker = mark;
       mark.addTo(samplesLayer);
@@ -894,9 +1158,9 @@
   function updateSamplesUI() {
     var sel = $("#sample-class");
     sel.innerHTML = "";
-    var act = I.activeClasses(state.season);
+    var act = currentActiveClasses();
     act.forEach(function (c) {
-      var o = el("option", null, (state.lang === "ar" ? c.ar : c.en) + " · " + c.code);
+      var o = el("option", null, className(c) + " · " + c.code);
       o.value = String(c.id); sel.appendChild(o);
     });
     updateSamplesState();
@@ -909,8 +1173,8 @@
       b.textContent = state.picking ? t("ws.samples.stop") : t("ws.samples.pick");
       var hint = $("#samples-state");
       if (state.picking) {
-        var c = I.classById(parseInt($("#sample-class").value, 10));
-        hint.textContent = t("ws.samples.pickHint", { class: state.lang === "ar" ? c.ar : c.en });
+        var c = classById(parseInt($("#sample-class").value, 10));
+        hint.textContent = t("ws.samples.pickHint", { class: className(c) });
       } else updateSamplesState();
     });
     $("#samples-clear").addEventListener("click", function () {
@@ -925,14 +1189,12 @@
       file.text().then(function (text) {
         try {
           var res = G.parseSamplesCsv(text, resolveClassId);
-          // keep only samples of classes active in the current season
-          var act = activeIds();
-          var kept = res.samples.filter(function (s) { return act.indexOf(s.classId) >= 0; });
-          var skippedInactive = res.samples.length - kept.length;
-          state.samples = state.samples.concat(kept);
+          // keep every valid sample — the engine applies the seasonal filter
+          // per run; the seasonal badge shows what is in season right now
+          state.samples = state.samples.concat(res.samples);
           refreshSampleMarkers();
           renderSamples();
-          toast(t("ws.samples.loaded", { n: fmt(kept.length, 0) }) + (res.skipped ? t("ws.samples.skipped", { n: fmt(res.skipped, 0) }) : "") + (skippedInactive ? " · " + t("ws.samples.inactive") + ": " + fmt(skippedInactive, 0) : ""));
+          toast(t("ws.samples.loaded", { n: fmt(res.samples.length, 0) }) + (res.skipped ? t("ws.samples.skipped", { n: fmt(res.skipped, 0) }) : ""));
         } catch (err) { toast(errorText(err), true); }
       });
       input.value = "";
@@ -945,14 +1207,18 @@
   var DVBackend = {
     mode: "preview",
     seedOf: function (input) {
-      var s = input.algorithm + "|" + input.season + "|" + (input.year || "") + "|" + JSON.stringify(input.params || {}) + "|" + (input.samplePoints ? input.samplePoints.length : 0);
+      var s = input.algorithm + "|" + input.scheme + "|" + input.season + "|" + (input.year || "") + "|" + (input.dateFrom || "") + "|" + (input.dateTo || "") + "|" + JSON.stringify(input.params || {}) + "|" + (input.samplePoints ? input.samplePoints.length : 0);
       var h = 0;
       for (var i = 0; i < s.length; i++) { h = (Math.imul(h, 31) + s.charCodeAt(i)) | 0; }
       return (h >>> 0) % 100000;
     },
     run: function (input) {
       var algo = I.algorithmByKey(input.algorithm);
-      var per = I.period(input.season, input.year || I.DEFAULT_YEAR);
+      var per = input.season === "custom"
+        ? { dateFrom: input.dateFrom, dateTo: input.dateTo }
+        : I.period(input.season, input.year || I.DEFAULT_YEAR);
+      var scheme = input.scheme === "crops" ? "crops" : "general";
+      var family = I.seasonFamily(input.season, input.dateFrom, input.dateTo);
       var res;
       if (algo.key === "kmeans") {
         var k = input.params && input.params.kClusters != null ? input.params.kClusters : I.PARAMS.kClusters.def;
@@ -960,16 +1226,22 @@
         res.isKmeans = true;
         res.kClusters = k;
       } else {
-        res = G.buildPreviewGrid(input.aoiGeo, I.CLASSES, input.season, this.seedOf(input));
+        // preview grid over the scheme's active classes, weighted by the
+        // class share of the reference sample set (D.SCHEMES priors)
+        var priors = (D.SCHEMES[scheme].priors[family] || D.SCHEMES[scheme].priors.full) || {};
+        var classes = I.activeClasses(scheme, family).map(function (c) {
+          return { id: c.id, weight: priors[c.id] != null ? priors[c.id] : 0.05 };
+        });
+        res = G.buildPreviewGrid(input.aoiGeo, classes, this.seedOf(input));
       }
       var shares = G.previewShares(res);
       var gridArea = G.gridAreaM2(res);
       var exact = state.aoi.areaM2; // geodesic polygon area (the quantity a real run would report)
       var classes = shares.map(function (s) {
-        var c = I.classById(s.classId);
+        var c = classById(s.classId, scheme);
         return {
-          classId: s.classId, code: c.code, en: c.en, ar: c.ar, color: c.color,
-          name: state.lang === "ar" ? c.ar : c.en,
+          classId: s.classId, code: c ? c.code : null, en: c ? c.en : "", ar: c ? c.ar : "", color: c ? c.color : "#cccccc",
+          name: className(c),
           share: s.share, percent: s.share * 100,
           areaM2: s.share * exact,
           nameCluster: null
@@ -987,11 +1259,14 @@
       if (algo.group === "supervised") {
         samplesInfo = input.samplePoints && input.samplePoints.length >= 20 && distinctClasses(input.samplePoints) >= 2
           ? { source: "manual", n: input.samplePoints.length }
-          : { source: "auto", n: null };
+          : { source: "builtin", n: D.REFERENCE_POINTS ? D.REFERENCE_POINTS.n : 360 };
       }
       return {
         mode: "preview",
         algorithm: algo.key, algorithmName: t("algo.names." + algo.key),
+        scheme: scheme, family: family,
+        activeClassIds: I.activeClassIds(scheme, family),
+        excludedClassIds: scheme === "crops" ? I.classesOf("crops").map(function (c) { return c.id; }).filter(function (id) { return I.activeClassIds(scheme, family).indexOf(id) < 0; }) : [],
         season: input.season, dateFrom: per.dateFrom, dateTo: per.dateTo,
         tileUrl: null,
         previewImage: G.gridToDataUrl(res, colorOf, 0.85),
@@ -1000,6 +1275,7 @@
         classes: classes,
         nImages: null, nTrain: null, nVal: null,
         sampleSource: samplesInfo ? samplesInfo.source : null,
+        nReferencePoints: samplesInfo ? samplesInfo.n : null,
         durationMs: 0,
         noteCodes: [res.isKmeans ? "kmeans_no_accuracy" : (algo.key === "signature" ? "instant_estimate" : null), "preview"].filter(Boolean),
         areaKm2: G.m2ToKm2(exact)
@@ -1012,13 +1288,15 @@
     return Object.keys(seen).length;
   }
   function colorOf(classId) {
-    var c = I.classById(classId);
+    var c = classById(classId);
     return hexToRgb(c ? c.color : "#cccccc");
   }
   function clusterColor(n) {
-    if (n <= 12) { var c = I.classById(n); return c.color; }
-    var h = (n * 47) % 360;
-    return "hsl(" + h + ", 70%, 55%)";
+    var KMEANS = ["e6194b", "3cb44b", "ffe119", "4363d8", "f58231", "911eb4", "46f0f0", "f032e6",
+      "d2f53c", "fabebe", "008080", "e6beff", "9a6324", "fffac8", "800000", "aaffc3",
+      "808000", "ffd8b1", "000080", "808080", "ffffff", "000000", "9a6324", "ffd700",
+      "4363d8", "469990", "9a11f0", "e6194b", "3cb44b", "ffe119"];
+    return "#" + KMEANS[(n - 1) % KMEANS.length];
   }
   function hexToRgb(hex) {
     var m = /^#?([0-9a-f]{6})$/i.exec(hex);
@@ -1101,13 +1379,14 @@
   /** Engine RunResult → the shape this UI's renderer speaks. */
   function normalizeLiveResult(jr, input) {
     if (!jr || !jr.classes) throw { code: "BACKEND_BAD" };
+    var scheme = jr.scheme === "crops" || (input && input.scheme) === "crops" ? "crops" : "general";
     var classes = jr.classes.map(function (c) {
-      var cls = I.classById(c.classId);
+      var cls = classById(c.classId, scheme);
       return {
         classId: c.classId, code: c.code != null ? c.code : (cls ? cls.code : null),
         en: c.en != null ? c.en : (cls ? cls.en : ""), ar: c.ar != null ? c.ar : (cls ? cls.ar : ""),
         color: c.color || (cls ? cls.color : "#cccccc"),
-        name: c.name != null ? c.name : (state.lang === "ar" ? (c.ar || (cls ? cls.ar : "")) : (c.en || (cls ? cls.en : ""))),
+        name: c.name != null ? c.name : className(cls),
         share: c.percent != null ? c.percent / 100 : (c.areaKm2 != null && jr.areaKm2 ? c.areaKm2 / jr.areaKm2 : 0),
         percent: c.percent != null ? c.percent : (c.areaKm2 != null && jr.areaKm2 ? c.areaKm2 / jr.areaKm2 * 100 : 0),
         areaM2: c.areaKm2 != null ? c.areaKm2 * 1e6 : (c.areaFeddan != null ? c.areaFeddan * 4200 : 0),
@@ -1118,9 +1397,18 @@
       };
     });
     var algo = (input && input.algorithm) || jr.algorithm;
+    var noteCodes = (jr.notes && jr.notes.length ? jr.notes.slice() : (jr.noteCode ? [jr.noteCode] : [])).slice();
+    // honest insight: weak measured accuracy at the crop level
+    if (typeof jr.oa === "number" && scheme === "crops" && jr.oa < 0.55 && noteCodes.indexOf("weak_accuracy") < 0) noteCodes.push("weak_accuracy");
+    if (jr.sampleSource === "builtin" && noteCodes.indexOf("builtin_training") < 0) noteCodes.push("builtin_training");
+    if (jr.sampleSource === "manual" && noteCodes.indexOf("manual_training") < 0) noteCodes.push("manual_training");
     return {
       mode: "live",
       algorithm: algo, algorithmName: t("algo.names." + algo),
+      scheme: scheme,
+      family: jr.family || (input && input.family) || null,
+      activeClassIds: jr.activeClassIds || null,
+      excludedClassIds: jr.excludedClassIds || [],
       season: (input && input.season) || jr.season,
       dateFrom: jr.dateFrom || (input && input.dateFrom), dateTo: jr.dateTo || (input && input.dateTo),
       tileUrl: jr.tileUrl || null,
@@ -1134,8 +1422,9 @@
       nVal: jr.nVal != null ? jr.nVal : null,
       sampleSource: jr.sampleSource || null,
       sampleClassCounts: jr.sampleClassCounts || null,
+      nReferencePoints: jr.nReferencePoints != null ? jr.nReferencePoints : null,
       durationMs: jr.durationMs || null,
-      noteCodes: (jr.noteCodes || (jr.noteCode ? [jr.noteCode] : [])).slice(),
+      noteCodes: noteCodes,
       downloadUrl: jr.downloadUrl || null,
       areaKm2: jr.areaKm2 != null ? jr.areaKm2 : G.m2ToKm2(state.aoi ? state.aoi.areaM2 : 0)
     };
@@ -1155,11 +1444,15 @@
     if (!state.aoi) { toast(t("ws.needAoi"), true); return; }
     var algo = I.algorithmByKey(algorithmKey || state.algorithm);
     var btn = $("#run-btn");
+    var per = currentPeriod();
     var input = {
       kind: "run",
+      scheme: currentScheme(),
       algorithm: algo.key,
       season: state.season,
-      year: state.year,
+      year: state.season === "custom" ? undefined : state.year,
+      dateFrom: state.season === "custom" ? per.dateFrom : undefined,
+      dateTo: state.season === "custom" ? per.dateTo : undefined,
       cloudMax: state.params.cloudMax,
       params: pickParams(algo),
       samplePoints: state.samples.map(function (s) { return { classId: s.classId, lon: s.lon, lat: s.lat }; }),
@@ -1208,14 +1501,12 @@
     if (state.results.tileUrl) {
       // live Earth Engine run: XYZ tile overlay under the AOI outline
       overlayLayer = L.tileLayer(state.results.tileUrl, { opacity: parseFloat($("#overlay-opacity").value), maxNativeZoom: 17, zIndex: 400 });
-      overlayLayer.addTo(map);
-      return;
-    }
-    if (!state.results.previewImage) return;
-    var b = state.results.grid.bounds;
-    overlayLayer = L.imageOverlay(state.results.previewImage, [[b[1], b[0]], [b[3], b[2]]], { opacity: parseFloat($("#overlay-opacity").value), interactive: false, zIndex: 400 });
-    overlayLayer.addTo(map);
-    overlayLayer.setZIndex && overlayLayer.setZIndex(400);
+    } else if (state.results.previewImage) {
+      var b = state.results.grid.bounds;
+      overlayLayer = L.imageOverlay(state.results.previewImage, [[b[1], b[0]], [b[3], b[2]]], { opacity: parseFloat($("#overlay-opacity").value), interactive: false, zIndex: 400 });
+    } else return;
+    if (state.layers.overlay !== false) overlayLayer.addTo(map);
+    if (abOn) setAbMode(true);   // re-clip the fresh overlay layer
   }
 
   // ---------------------------------------------------------------- live scene layers (Sentinel-2)
@@ -1230,9 +1521,9 @@
     }
     sceneActive = layer;
     $$("#scene-seg button").forEach(function (b) { b.classList.toggle("is-on", b.getAttribute("data-scene") === layer); });
-    var per = I.period(state.season, state.year);
+    var per = currentPeriod();
     liveFetch((backendUrl() ? backendUrl().replace(/\/api\/gee\/run$/, "") : S.apiBase()) + "/api/gee/scene", {
-      layer: layer, season: state.season, year: state.year,
+      layer: layer, season: state.season, year: state.season === "custom" ? undefined : state.year,
       dateFrom: per.dateFrom, dateTo: per.dateTo,
       cloudMax: state.params.cloudMax != null ? state.params.cloudMax : I.PARAMS.cloudMax.def
     }, 130000).then(function (j) {
@@ -1250,24 +1541,24 @@
   /** NDVI time-series popup at a clicked point (live mode). */
   function ndviPointPopup(latlng) {
     if (!map) return;
-    var per = I.period(state.season, state.year);
+    var per = currentPeriod();
     var pop = L.popup({ className: "ndvi-pop", maxWidth: 320 })
       .setLatLng(latlng)
-      .setContent('<h4>' + esc(t("ws.ndvi.loading")) + '</h4>')
+      .setContent('<h4>' + esc(t("ws.ndvi.loading")) + '</h4><p class="num" style="font-size:.75rem">' + latlng.lat.toFixed(5) + ", " + latlng.lng.toFixed(5) + '</p>')
       .openOn(map);
     var base = backendUrl() ? backendUrl().replace(/\/api\/gee\/run$/, "") : (S ? S.apiBase() : "");
     liveFetch(base + "/api/gee/ndvi-point", {
       lon: +latlng.lng.toFixed(6), lat: +latlng.lat.toFixed(6),
-      season: state.season, year: state.year,
+      season: state.season, year: state.season === "custom" ? undefined : state.year,
       dateFrom: per.dateFrom, dateTo: per.dateTo,
       cloudMax: state.params.cloudMax != null ? state.params.cloudMax : I.PARAMS.cloudMax.def
     }, 130000).then(function (j) {
       var series = (j && j.series) || [];
       if (!series.length) {
-        pop.setContent('<h4>' + esc(t("ws.ndvi.title")) + '</h4><p>' + esc(t("ws.ndvi.empty")) + '</p>');
+        pop.setContent('<h4>' + esc(t("ws.ndvi.title")) + '</h4><p class="num" style="font-size:.75rem">' + latlng.lat.toFixed(5) + ", " + latlng.lng.toFixed(5) + '</p><p>' + esc(t("ws.ndvi.empty")) + '</p>');
         return;
       }
-      pop.setContent('<h4>' + esc(t("ws.ndvi.title")) + '</h4>' + ndviChartSvg(series));
+      pop.setContent('<h4>' + esc(t("ws.ndvi.title")) + '</h4><p class="num" style="font-size:.75rem">' + latlng.lat.toFixed(5) + ", " + latlng.lng.toFixed(5) + '</p>' + ndviChartSvg(series));
     }, function () {
       pop.setContent('<h4>' + esc(t("ws.ndvi.title")) + '</h4><p>' + esc(t("errors.ndvi_failed")) + '</p>');
     });
@@ -1311,10 +1602,14 @@
 
   function leaguePayload() {
     var algo = I.algorithmByKey(state.algorithm);
+    var per = currentPeriod();
     return {
       kind: "compare",
+      scheme: currentScheme(),
       season: state.season,
-      year: state.year,
+      year: state.season === "custom" ? undefined : state.year,
+      dateFrom: state.season === "custom" ? per.dateFrom : undefined,
+      dateTo: state.season === "custom" ? per.dateTo : undefined,
       cloudMax: state.params.cloudMax,
       params: pickParams(algo),
       samplePoints: state.samples.map(function (s) { return { classId: s.classId, lon: s.lon, lat: s.lat }; }),
@@ -1359,13 +1654,13 @@
       bestBtn.onclick = function () {
         dlg.close();
         try {
-          var res = normalizeLiveResult(j.best, { algorithm: j.best.algorithm, season: input.season, year: input.year });
+          var res = normalizeLiveResult(j.best, { algorithm: j.best.algorithm, scheme: input.scheme, season: input.season, year: input.year });
           if (!res.tileUrl) throw { code: "BACKEND_BAD" };
           state.results = res;
           state.resultsParams = { params: pickParams(I.algorithmByKey(j.best.algorithm)), cloudMax: state.params.cloudMax };
           state.algorithm = j.best.algorithm; savePrefs();
           showOverlay(); renderResults(); renderLegend();
-          saveRunSnapshot({ kind: "run", algorithm: j.best.algorithm, season: input.season, year: input.year, cloudMax: input.cloudMax, params: input.params, samplePoints: input.samplePoints, aoiGeo: input.aoiGeo, aoiName: input.aoiName }, res);
+          saveRunSnapshot({ kind: "run", algorithm: j.best.algorithm, scheme: input.scheme, season: input.season, year: input.year, cloudMax: input.cloudMax, params: input.params, samplePoints: input.samplePoints, aoiGeo: input.aoiGeo, aoiName: input.aoiName }, res);
         } catch (err) { toast(errorText(err), true); }
       };
     }, function (err) {
@@ -1382,7 +1677,10 @@
     var r = state.results;
     var algoName = t("algo.names." + r.algorithm);
     var seasonName = t("ws.season." + r.season);
-    $("#results-run").textContent = t("ws.results.run", { algo: algoName, season: seasonName, period: r.dateFrom + " → " + r.dateTo });
+    var levelName = r.scheme === "crops" ? t("ws.level.crops") : t("ws.level.general");
+    $("#results-run").textContent = t("ws.results.run", { algo: algoName, season: seasonName, period: r.dateFrom + " → " + r.dateTo })
+      + " · " + t("ws.results.level", { level: r.scheme === "crops" ? "2" : "1", name: levelName });
+    renderTrainingSetLine(r);
 
     // stat cards
     var row = $("#stat-row"); row.innerHTML = "";
@@ -1480,16 +1778,17 @@
     // donut
     renderDonut(r.classes);
 
-    // signature chart (the engine's reference library for this season)
+    // signature chart (the reference statistics for this season family)
     var st = $("#signature-title"), sx = $("#signature-text");
     if (r.algorithm === "kmeans") {
       st.textContent = t("ws.results.clusters");
       sx.textContent = t("notes.kmeans_no_accuracy");
       $("#signature-chart").innerHTML = "";
     } else {
-      st.textContent = t("ws.results.signatureTitle", { season: seasonName });
+      var fam = r.family || currentFamily();
+      st.textContent = t("ws.results.signatureTitle", { season: t("ws.season.family." + fam) });
       sx.textContent = t("ws.results.signatureText");
-      renderSignature(r.season);
+      renderSignature(fam, r.scheme);
     }
     updateReportHead();
   }
@@ -1501,7 +1800,7 @@
     if (!(r.mode === "live" && cm && cm.classIds && cm.classIds.length > 1)) { wrap.hidden = true; tbl.innerHTML = ""; return; }
     wrap.hidden = false;
     tbl.innerHTML = "";
-    var names = cm.classIds.map(function (id) { var c = I.classById(id); return c ? (state.lang === "ar" ? c.ar : c.en) + " (" + c.code + ")" : String(id); });
+    var names = cm.classIds.map(function (id) { var c = classById(id, r.scheme); return c ? className(c) + " (" + c.code + ")" : String(id); });
     var thead = el("thead"), trh = el("tr");
     trh.appendChild(el("th", "rowhead", "↓"));
     names.forEach(function (n) { trh.appendChild(el("th", null, n)); });
@@ -1561,19 +1860,28 @@
     statCard(totals, fmt(sumWater, 0) + " ", t("ws.results.dssTotalWater"), "m³");
   }
 
-  /** Notes strip + GeoTIFF download for the current run. */
+  /** Notes strip + GeoTIFF download + accuracy insight for the current run. */
   function renderRunExtras(r) {
     var run = $("#results-run");
     var actions = document.querySelector(".results-actions");
     var old = document.getElementById("run-notes"); if (old) old.remove();
+    var oldInsight = document.getElementById("run-insight"); if (oldInsight) oldInsight.remove();
     var oldDl = document.getElementById("geotiff-btn"); if (oldDl) oldDl.remove();
+    // the honest accuracy insight: crop types overlap strongly in the signal
+    if (r.noteCodes && r.noteCodes.indexOf("weak_accuracy") >= 0 && r.mode === "live") {
+      var insight = el("div", "insight-box");
+      insight.id = "run-insight";
+      insight.appendChild(el("b", null, t("ws.results.insight")));
+      run.parentNode.insertBefore(insight, run.nextSibling);
+    }
     if (run && r.noteCodes && r.noteCodes.length) {
-      var texts = r.noteCodes.map(function (code) { return t("notes." + code); })
+      var texts = r.noteCodes.filter(function (code) { return code !== "weak_accuracy"; }).map(function (code) { return t("notes." + code); })
         .filter(function (s) { return s && s.indexOf("notes.") !== 0; });
       if (texts.length) {
         var p = el("p", "hint", texts.join(" · "));
         p.id = "run-notes";
-        run.parentNode.insertBefore(p, run.nextSibling);
+        var anchor = document.getElementById("run-insight") || run;
+        run.parentNode.insertBefore(p, anchor.nextSibling);
       }
     }
     if (actions && r.downloadUrl) {
@@ -1587,6 +1895,24 @@
   }
 
   function td(tr, text, cls) { var d = el("td", cls || "", text == null ? "—" : String(text)); tr.appendChild(d); return d; }
+
+  /** one-line provenance of the training set behind the current run */
+  function renderTrainingSetLine(r) {
+    var old = document.getElementById("training-set-line"); if (old) old.remove();
+    if (!r) return;
+    if (r.mode !== "live" && r.mode !== "preview") return;
+    var algo = I.algorithmByKey(r.algorithm);
+    if (algo.group !== "supervised") return;
+    var src = r.sampleSource === "manual" ? t("notes.manual_training") : t("notes.builtin_training");
+    var line = el("p", "hint", t("ws.results.trainingSet", {
+      source: src, n: fmt(r.nReferencePoints != null ? r.nReferencePoints : 360, 0),
+      k: fmt(r.activeClassIds ? r.activeClassIds.length : (r.classes || []).length, 0),
+      split: "70/30"
+    }));
+    line.id = "training-set-line";
+    var run = $("#results-run");
+    if (run && run.parentNode) run.parentNode.insertBefore(line, run.nextSibling);
+  }
   function statCard(row, big, label, unit) {
     var c = el("div", "stat-card");
     var b = el("b", "num", big);
@@ -1650,23 +1976,25 @@
   }
 
   // ---------------------------------------------------------------- signature chart
-  function renderSignature(season) {
+  function renderSignature(family, schemeKey) {
     var box = $("#signature-chart"); box.innerHTML = "";
+    var scheme = schemeKey === "crops" ? "crops" : "general";
+    var fam = family || currentFamily();
+    var classes = I.activeClasses(scheme, fam);
+    if (!classes.length) classes = I.classesOf(scheme);
     var W = 640, H = 300, ML = 40, MB = 34, MT = 10, MR = 8;
-    var classes = I.CLASSES.filter(function (c) {
-      var act = I.activeClasses(season);
-      for (var i = 0; i < act.length; i++) if (act[i].id === c.id) return true;
-      return false;
-    });
-    if (!classes.length) return;
+    var sigs = (D.SCHEMES[scheme] && D.SCHEMES[scheme].signatures) || {};
     var rows = classes.map(function (c) {
-      var sig = D.SIGNATURES[season] ? D.SIGNATURES[season][c.id] : null;
-      if (!sig) { // full year: the engine averages the winter and summer signatures
-        var w = D.SIGNATURES.winter[c.id], s = D.SIGNATURES.summer[c.id];
-        sig = w.map(function (v, i) { return (v + s[i]) / 2; });
+      var sig = sigs[fam] ? sigs[fam][c.id] : null;
+      if (!sig) { // "full" family or a missing table: average the winter/summer stats
+        var w = sigs.winter && sigs.winter[c.id], s = sigs.summer && sigs.summer[c.id];
+        if (w && s) sig = [(w[0] + s[0]) / 2, (w[1] + s[1]) / 2, (w[2] + s[2]) / 2];
+        else sig = w || s;
       }
+      if (!sig) return null;
       return { c: c, mean: sig[0], p10: sig[1], p90: sig[2] };
-    });
+    }).filter(Boolean);
+    if (!rows.length) return;
     var yMin = -0.2, yMax = 1.0;
     var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     svg.setAttribute("viewBox", "0 0 " + W + " " + H);
@@ -1731,7 +2059,7 @@
   function classesCsv() {
     var r = state.results;
     if (!r) return;
-    var per = I.period(r.season, state.year);
+    var per = r.season === "custom" ? { dateFrom: r.dateFrom, dateTo: r.dateTo } : I.period(r.season, state.year);
     var head = ["class_id", "code", "class_en", "class_ar", "area_feddan", "area_km2", "share_percent"];
     var lines = [head.join(",")];
     r.classes.forEach(function (c) {
@@ -1739,10 +2067,11 @@
     });
     lines.push(["", "", "", "", feddan(state.aoi.areaM2), fmt(G.m2ToKm2(state.aoi.areaM2), 4), "100"].map(csvCell).join(","));
     var meta = [
-      ["algorithm", r.algorithm], ["season", r.season], ["period", per.dateFrom + ".." + per.dateTo],
+      ["algorithm", r.algorithm], ["scheme", r.scheme || "general"], ["season", r.season],
+      ["period", (per.dateFrom || r.dateFrom) + ".." + (per.dateTo || r.dateTo)],
       ["study_area", state.aoi.name || ""], ["mode", state.results && state.results.mode === "live" ? "live" : "preview"], ["exported", new Date().toISOString()]
     ].map(function (kv) { return csvCell("# " + kv[0] + ": " + kv[1]); });
-    downloadText("delta_vision_" + r.algorithm + "_" + r.season + "_" + stamp() + ".csv", "\ufeff" + meta.concat(lines).join("\n"), "text/csv");
+    downloadText("delta_vision_" + (r.scheme === "crops" ? "crops" : "landcover") + "_" + r.algorithm + "_" + stamp() + ".csv", "\ufeff" + meta.concat(lines).join("\n"), "text/csv");
     toast(t("common.download"));
   }
   function parcelsCsv() {
@@ -1756,7 +2085,7 @@
   }
   function templateCsv() {
     var lines = ["lon,lat,class"];
-    var demo = [[29.81, 30.88, "WHT"], [29.83, 30.89, "WHT"], [29.86, 30.87, 4], [29.87, 30.90, "Rice"], [29.90, 30.88, 10]];
+    var demo = [[29.81, 30.88, "WHT"], [29.83, 30.89, "Wheat"], [29.86, 30.87, 1], [29.87, 30.90, "Sugar Beet"], [29.90, 30.88, 10]];
     lines = lines.concat(demo.map(function (r) { return r.join(","); }));
     lines.push("# " + t("ws.samples.csvHint"));
     downloadText("delta_vision_samples_template.csv", "\ufeff" + lines.join("\n"), "text/csv");
@@ -1766,10 +2095,12 @@
     rh.innerHTML = "";
     var h = el("h1", null, t("report.title"));
     rh.appendChild(h);
-    var per = I.period(state.season, state.year);
+    var r = state.results;
+    var per = currentPeriod();
     var dl = el("dl");
     function ddRow(k, v) { dl.appendChild(el("dt", null, k)); dl.appendChild(el("dd", null, v)); }
     ddRow(t("report.studyArea"), (state.aoi ? state.aoi.name : "—"));
+    ddRow(t("report.level"), r && r.scheme === "crops" ? t("ws.results.level", { level: "2", name: t("ws.level.crops") }) : t("ws.results.level", { level: "1", name: t("ws.level.general") }));
     ddRow(t("report.period"), per.dateFrom + " → " + per.dateTo);
     ddRow(t("report.algorithm"), t("algo.names." + state.algorithm));
     ddRow(t("report.params"), paramsText());
@@ -1815,7 +2146,7 @@
     if (!S || !S.isServer()) return;   // local-only build or offline: history is a server feature
     if (suppressSave) { suppressSave = false; return; }
     S.saveRun({
-      algorithm: input.algorithm, season: input.season, year: input.year,
+      algorithm: input.algorithm, scheme: input.scheme, season: input.season, year: input.year,
       mode: res.mode === "live" ? "live" : "preview",
       aoiName: input.aoiName || "", aoiGeo: input.aoiGeo,
       samplePoints: input.samplePoints || [], params: input.params || {},
@@ -1920,7 +2251,8 @@
       });
       aoi.areaM2 = area; aoi.parcels = parcels;
       setAoi(aoi);
-      // restore season/year/algorithm/params/samples
+      // restore scheme/season/year/algorithm/params/samples
+      if (run.scheme) state.scheme = run.scheme === "crops" ? "crops" : "general";
       state.season = run.season; state.year = run.year || state.year;
       state.algorithm = run.algorithm;
       if (run.params) Object.keys(run.params).forEach(function (k) { if (state.params[k] != null || I.PARAMS[k]) state.params[k] = run.params[k]; });
@@ -2134,12 +2466,38 @@
       $$("#card-aoi .tabpanel").forEach(function (p) { p.classList.toggle("is-on", p.id === "panel-" + name); });
     });
     $("#season-tabs").addEventListener("click", function (ev) {
-      var b = ev.target.closest(".tab"); if (!b) return;
+      var b = ev.target.closest(".tab"); if (!b || b.disabled) return;
       state.season = b.getAttribute("data-season");
+      if (state.season !== "custom") { /* presets carry their own dates */ }
       $$("#season-tabs .tab").forEach(function (x) { x.classList.toggle("is-on", x === b); });
       updateSeasonInfo();
       updateSamplesUI();
       renderSamples();
+      savePrefs();
+    });
+    // classification level: Level 1 land cover / Level 2 crop type
+    $("#level-seg").addEventListener("click", function (ev) {
+      var b = ev.target.closest(".level-btn"); if (!b) return;
+      var scheme = b.getAttribute("data-scheme");
+      if (scheme === state.scheme) return;
+      state.scheme = scheme;
+      // strict seasonal filtering: the crop scheme has no full-year period
+      if (state.scheme === "crops" && state.season === "full") state.season = I.DEFAULT_SEASON;
+      renderWorkspaceChrome();
+      savePrefs();
+    });
+    // custom date range → detected season
+    $("#custom-apply").addEventListener("click", function () {
+      var from = $("#custom-from").value, to = $("#custom-to").value;
+      if (!from || !to || from >= to) { toast(t("errors.bad_date_range"), true); return; }
+      state.customFrom = from; state.customTo = to; state.season = "custom";
+      $$("#season-tabs .tab").forEach(function (x) { x.classList.remove("is-on"); });
+      renderWorkspaceChrome();
+      savePrefs();
+    });
+    $("#custom-clear").addEventListener("click", function () {
+      state.season = I.DEFAULT_SEASON; state.customFrom = state.customTo = null;
+      renderWorkspaceChrome();
       savePrefs();
     });
   }
@@ -2147,13 +2505,18 @@
   // ---------------------------------------------------------------- boot
   function applyModeBadge() {
     var badge = $("#mode-badge");
-    if (!badge) return;
-    badge.classList.toggle("is-live", isLive());
-    var label = badge.lastElementChild;
-    if (label) {
-      label.removeAttribute("data-i18n");
-      label.textContent = isLive() ? t("ws.results.modeLive") : t("ws.previewBadge");
+    if (badge) {
+      badge.classList.toggle("is-live", isLive());
+      var label = badge.lastElementChild;
+      if (label) {
+        label.removeAttribute("data-i18n");
+        label.textContent = isLive() ? t("ws.results.modeLive") : t("ws.previewBadge");
+      }
     }
+    // the long preview explanation only belongs to preview deployments —
+    // live sites show the green badge instead
+    var note = document.querySelector(".preview-note");
+    if (note) note.hidden = isLive();
   }
 
   function boot() {

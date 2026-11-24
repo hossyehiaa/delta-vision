@@ -13,7 +13,7 @@ mkdir -p engine
 echo "bundled engine/_gee_engine.js: $(wc -c < engine/_gee_engine.js) bytes"
 node -e "
 const E = require('./engine/_gee_engine.js');
-const need = ['runClassification','compareAll','buildScene','ndviPointSeries','getEE','isGEEConfigured','GEEError','resolvePeriod','signatureSeason','mlpTrain','mlpPredict','mlpConfusion','CLASSES','SIGNATURES','SIG_FEATURES','SIG_SCALES','makeAoi','aoiGeoAreaM2'];
+const need = ['runClassification','compareAll','buildScene','ndviPointSeries','getEE','isGEEConfigured','GEEError','resolvePeriod','detectSeasonFamily','seasonFamilyOf','runFamily','mlpTrain','mlpPredict','mlpConfusion','CLASSES','classesOf','activeClassIds','schemeOf','mapClassId','referencePoints','assignSplit','TRAINING_SET_INFO','SIG_FEATURES','SIG_SCALES','makeAoi','aoiGeoAreaM2'];
 const missing = need.filter((k) => !(k in E));
 if (missing.length) { console.error('MISSING EXPORTS:', missing); process.exit(1); }
 console.log('bundle exports OK:', need.length, 'symbols | configured:', E.isGEEConfigured());

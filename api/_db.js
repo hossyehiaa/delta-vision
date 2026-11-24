@@ -54,6 +54,7 @@ CREATE TABLE IF NOT EXISTS runs (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS runs_user_idx ON runs (user_id, created_at DESC);
+ALTER TABLE runs ADD COLUMN IF NOT EXISTS scheme TEXT;
 `;
 
 async function initSchema() {
