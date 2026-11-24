@@ -2460,19 +2460,19 @@
     var total = grid.nx * grid.ny;
     toast(t("ws.results.pngTiles", { n: total }));
     var tiles = new Array(total);
-    var idx = 0, done = 0, failures = 0;
+    var idx = 0, done = 0, failures = 0, inFlight = 0;
     return new Promise(function (resolve, reject) {
       var next = function () {
-        while (idx < total && tiles.filter(function (x) { return x === undefined; }).length < 12) {
+        while (idx < total && inFlight < 12) {
           (function (i) {
-            tiles[i] = null; // in-flight marker
+            inFlight++;
             var url = r.tileUrl.replace("{z}", z).replace("{x}", String(grid.x0 + (i % grid.nx))).replace("{y}", String(grid.y0 + Math.floor(i / grid.nx)));
             loadTile(url, 2).then(function (img) {
-              tiles[i] = img; done++;
+              tiles[i] = img; done++; inFlight--;
               if (done === total) finish();
               else next();
             }, function () {
-              tiles[i] = null; done++; failures++;
+              tiles[i] = null; done++; failures++; inFlight--;
               if (done === total) finish();
               else next();
             });
