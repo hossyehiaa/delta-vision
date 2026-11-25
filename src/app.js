@@ -1738,6 +1738,7 @@
         runCache.set(cacheKey, res);  // instant on the way back
         if (runCache.size > 24) runCache.delete(runCache.keys().next().value);
         saveRunSnapshot(input, res);  // server history (no-op when offline / not signed in via server)
+        warmExportPng(input);         // background: render the export PNG once
       }
       done();
     };
@@ -2405,6 +2406,20 @@
       // endpoint or Earth Engine refused → the tile-stitch fallback
       return buildClassifiedCanvas(r);
     });
+  }
+  /** fire-and-forget: ask the server to render (and cache) the export PNG
+   *  right after a successful run, so clicking Export later is instant.
+   *  Silent by design — errors just leave the click-on path to do the work. */
+  function warmExportPng(input) {
+    if (!isLive() || !input || !input.aoiGeo) return;
+    try {
+      var url = liveUrl().replace(/\/api\/gee\/run$/, "/api/gee/export-png");
+      fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(Object.assign({}, input, { kind: "run", thumbDim: 1400 }))
+      }).catch(function () { /* silent warm */ });
+    } catch (e) { /* silent */ }
   }
   /** the run input for the current UI state (used when a replayed result
    *  carries no stored input) */

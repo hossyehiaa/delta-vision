@@ -1264,6 +1264,7 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   // thumb-only mode (renderThumbUrl): stop once the classified image exists —
   // the publication PNG is rendered on demand, never during a normal run
   if ((input as any).thumbOnly) {
+    if (accP) accP.catch(() => { /* not needed for the export */ });
     const thumbUrl = await p<string>((cb) => (classified as any).visualize(vis).getThumbURL({
       region: aoi.bounds(), dimensions: (input as any).thumbDim || 1400, format: "png",
     }, cb)).catch(() => null);

@@ -6,6 +6,38 @@
 "use strict";
 const E = require("../../engine/_gee_engine");
 const { json, readBody } = require("../_db");
+const cache = require("../_gee_cache");
+
+/* Byte cache + in-flight dedupe: a completed classification fires a
+ * background warm-up for the PNG, so the later "Export" click reads warm
+ * bytes (< 1 s) instead of re-running the Earth Engine render (~50 s). */
+const PNG_TTL_MS = 10 * 60 * 1000;
+const pngCache = new Map();     // key → { at, buf }
+const pngInflight = new Map();  // key → Promise<Buffer>
+function pngGet(key) {
+  const hit = pngCache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > PNG_TTL_MS) { pngCache.delete(key); return null; }
+  return hit.buf;
+}
+function renderPng(key, input) {
+  const cached = pngGet(key);
+  if (cached) return Promise.resolve(cached);
+  let p = pngInflight.get(key);
+  if (p) return p;
+  p = E.renderThumbUrl(input)
+    .then(({ thumbUrl }) => fetch(thumbUrl))
+    .then(async (res) => {
+      if (!res.ok) throw Object.assign(new Error("thumb HTTP " + res.status), { code: "thumb_failed" });
+      const buf = Buffer.from(await res.arrayBuffer());
+      pngCache.set(key, { at: Date.now(), buf });
+      while (pngCache.size > 8) pngCache.delete(pngCache.keys().next().value);
+      return buf;
+    })
+    .finally(() => { pngInflight.delete(key); });
+  pngInflight.set(key, p);
+  return p;
+}
 
 module.exports = async function (req, res) {
   if (req.method !== "POST") return json(res, { error: "METHOD" }, 405);
@@ -32,10 +64,7 @@ module.exports = async function (req, res) {
       thumbDim: 1400,
     };
     if (!input.algorithm) return json(res, { error: "unknown_algorithm" }, 400);
-    const { thumbUrl } = await E.renderThumbUrl(input);
-    const png = await fetch(thumbUrl);
-    if (!png.ok) return json(res, { error: "thumb_failed", status: png.status }, 502);
-    const buf = Buffer.from(await png.arrayBuffer());
+    const buf = await renderPng(cache.runKey(body), input);
     res.writeHead(200, {
       "Content-Type": "image/png",
       "Content-Length": buf.length,
