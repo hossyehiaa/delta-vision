@@ -1261,6 +1261,24 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     }
   }
 
+  // thumb-only mode (renderThumbUrl): stop once the classified image exists —
+  // the publication PNG is rendered on demand, never during a normal run
+  if ((input as any).thumbOnly) {
+    const thumbUrl = await p<string>((cb) => (classified as any).visualize(vis).getThumbURL({
+      region: aoi.bounds(), dimensions: (input as any).thumbDim || 1400, format: "png",
+    }, cb)).catch(() => null);
+    return {
+      mode: "live", algorithm: input.algorithm, season: input.season, scheme,
+      family, activeClassIds: active, excludedClassIds: excluded,
+      dateFrom: start, dateTo: end,
+      tileUrl: null, oa: null, kappa: null, classes: [],
+      confusion: null, nImages: 0, nTrain: 0, nVal: 0,
+      durationMs: Date.now() - t0, downloadUrl: null, thumbUrl,
+      notes: notes.length ? notes : undefined,
+      areaKm2: 0, sampleSource, nReferencePoints: trainingPoints.length,
+    } as RunResult;
+  }
+
   // All independent server round trips at once: tiles, class areas, the
   // GeoTIFF link and the accuracy evaluation (plus the image count started
   // earlier) — sequential awaits here were pure latency.
@@ -1432,6 +1450,18 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
 
 export async function runClassification(input: RunInput): Promise<RunResult> {
   return withCapacityRetry(() => runClassificationOnce(input));
+}
+
+/** Publication PNG of the classified AOI, rendered on demand by a single
+ *  synchronous Earth Engine request (no tile storm, no client rate limits).
+ *  The caller fetches the returned URL server-side and streams the bytes.
+ *  ~1400 px keeps the render inside EE's synchronous memory budget; the
+ *  client upscales to >= 2000 px with nearest-neighbour. */
+export async function renderThumbUrl(input: RunInput & { thumbDim?: number }): Promise<{ thumbUrl: string }> {
+  const res = await withCapacityRetry(() =>
+    runClassificationOnce({ ...input, thumbOnly: true, thumbDim: input.thumbDim } as RunInput));
+  if (!res.thumbUrl) throw new GEEError("thumb_failed", "the classified PNG could not be rendered");
+  return { thumbUrl: res.thumbUrl };
 }
 
 

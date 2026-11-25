@@ -58,6 +58,9 @@ const RUN_L1 = {
     }
     if (p === "/api/runs" && method === "GET") return reply(200, { ok: true, runs: [] });
     if (p === "/api/auth/demo" && method === "POST") return reply(200, { ok: true, token: "demo-token", user: { id: "demo", email: "demo@deltavision.app", name: "Demo" } });
+    if (p === "/api/gee/export-png" && method === "POST") {
+      return route.fulfill({ contentType: "image/png", body: PNG1x1 });
+    }
     if (p === "/api/gee/run" && method === "POST") {
       calls.run++;
       calls.runBodies.push(body);

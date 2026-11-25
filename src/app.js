@@ -1722,6 +1722,7 @@
     var done = function () { btn.disabled = false; btn.textContent = t("ws.run"); hideRunProgress(); };
     var finish = function (res, fromCache) {
       state.results = res;
+      state.results._input = input;   // the export endpoint replays exactly this
       state.results.algorithm = algo.key;
       state.resultsParams = { params: pickParams(algo), cloudMax: state.params.cloudMax };
       if (fromCache) res.fromCache = true; else res.fromCache = false;
@@ -2347,7 +2348,7 @@
     if (!r) { toast(t("ws.results.empty"), true); return; }
     if (!r.tileUrl && !r.previewImage) { toast(t("ws.results.pngNoTiles"), true); return; }
     toast(t("ws.results.pngStitching"));
-    buildClassifiedCanvas(r).then(function (work) {
+    buildExportRaster(r).then(function (work) {
       return (document.fonts && document.fonts.ready ? document.fonts.ready.then(function () { return work; }) : Promise.resolve(work));
     }).then(function (work) {
       var out = buildComposedCanvas(work, r);
@@ -2359,6 +2360,71 @@
     }, function (err) {
       toast(t("ws.results.pngFailed", { err: (err && err.code) || err }), true);
     });
+  }
+  /** the classified raster for export. Live runs ask the server for a
+   *  single-EE-request thumbnail (palette colours, AOI clipped, outside
+   *  transparent) and upscale it to >= 2000 px with nearest-neighbour —
+   *  no client-side tile storm, no Earth Engine 429s. On any endpoint
+   *  failure the tile-stitch fallback runs. Preview mode draws its own
+   *  preview image. */
+  function buildExportRaster(r) {
+    if (!r.tileUrl || !isLive()) {
+      return r.previewImage ? buildClassifiedCanvas(r) : Promise.reject({ code: "pngNoTiles" });
+    }
+    var url = liveUrl().replace(/\/api\/gee\/run$/, "/api/gee/export-png");
+    var body = JSON.stringify(Object.assign({}, (r._input || currentRunInput(r.algorithm)), { kind: "run", thumbDim: 1400 }));
+    var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
+    var timer = ctl ? setTimeout(function () { ctl.abort(); }, 95000) : null;
+    return fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body,
+      signal: ctl ? ctl.signal : undefined
+    }).then(function (res) {
+      if (timer) clearTimeout(timer);
+      if (!res.ok) throw new Error("HTTP " + res.status);
+      return res.blob();
+    }).then(function (blob) {
+      return createImageBitmap(blob);
+    }).then(function (bmp) {
+      // >= 2000 px on the long side; nearest-neighbour keeps the class
+      // pixels crisp instead of blurring them into each other
+      var W = bmp.width, H = bmp.height, longSide = Math.max(W, H);
+      var k = longSide < 2000 ? 2000 / longSide : 1;
+      var cv = document.createElement("canvas");
+      cv.width = Math.round(W * k); cv.height = Math.round(H * k);
+      var ctx = cv.getContext("2d");
+      ctx.imageSmoothingEnabled = false;
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, cv.width, cv.height);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
+      return { img: cv, w: cv.width, h: cv.height, ctx: ctx };
+    }).catch(function (err) {
+      if (timer) clearTimeout(timer);
+      // endpoint or Earth Engine refused → the tile-stitch fallback
+      return buildClassifiedCanvas(r);
+    });
+  }
+  /** the run input for the current UI state (used when a replayed result
+   *  carries no stored input) */
+  function currentRunInput(algorithmKey) {
+    var algo = I.algorithmByKey(algorithmKey || state.algorithm);
+    var per = currentPeriod();
+    return {
+      kind: "run",
+      scheme: currentScheme(),
+      algorithm: algo.key,
+      season: state.season,
+      year: state.season === "custom" ? undefined : state.year,
+      dateFrom: state.season === "custom" ? per.dateFrom : undefined,
+      dateTo: state.season === "custom" ? per.dateTo : undefined,
+      cloudMax: state.params.cloudMax,
+      params: pickParams(algo),
+      samplePoints: state.samples.map(function (sx) { return { classId: sx.classId, lon: sx.lon, lat: sx.lat }; }),
+      aoiGeo: state.aoi ? state.aoi.fc : undefined,
+      aoiName: state.aoi ? state.aoi.name : undefined
+    };
   }
   function canvasFont() {
     return '"Tajawal", "Segoe UI", system-ui, sans-serif';
@@ -2615,7 +2681,7 @@
   function printReport() {
     var r = state.results;
     if (!r) { toast(t("ws.results.empty"), true); return; }
-    buildClassifiedCanvas(r).then(function (work) {
+    buildExportRaster(r).then(function (work) {
       var isAr = state.lang === "ar";
       var png = composeExportCanvas(work, r);       // same composite as the PNG export
       var dataUrl = png.toDataURL("image/png");
