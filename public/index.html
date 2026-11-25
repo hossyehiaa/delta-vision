@@ -6804,6 +6804,19 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
     var body = JSON.stringify(Object.assign({}, (r._input || currentRunInput(r.algorithm)), { kind: "run", thumbDim: 1400 }));
     var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
     var timer = ctl ? setTimeout(function () { ctl.abort(); }, 95000) : null;
+    // a background warm-up for exactly this request: reuse it (its converted
+    // raster is kept on the promise, so export + print share one render)
+    var toFallback = function () { return buildClassifiedCanvas(r); };
+    if (pngWarm && pngWarm._dvBody === body) {
+      if (pngWarm._dvWork) return Promise.resolve(pngWarm._dvWork);
+      return pngWarm.then(function (res) {
+        if (!res || !res.ok) throw new Error("HTTP " + (res && res.status));
+        return res.blob();
+      }).then(blobToWork).then(function (work) {
+        pngWarm._dvWork = work;
+        return work;
+      }).catch(toFallback);
+    }
     return fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -6814,10 +6827,17 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
       if (!res.ok) throw new Error("HTTP " + res.status);
       return res.blob();
     }).then(function (blob) {
-      return createImageBitmap(blob);
-    }).then(function (bmp) {
-      // >= 2000 px on the long side; nearest-neighbour keeps the class
-      // pixels crisp instead of blurring them into each other
+      return blobToWork(blob);
+    }).catch(function (err) {
+      if (timer) clearTimeout(timer);
+      // endpoint or Earth Engine refused → the tile-stitch fallback
+      return buildClassifiedCanvas(r);
+    });
+  }
+  /** EE thumbnail blob → a >= 2000 px work raster (nearest-neighbour keeps
+   *  the class pixels crisp instead of blurring them into each other) */
+  function blobToWork(blob) {
+    return createImageBitmap(blob).then(function (bmp) {
       var W = bmp.width, H = bmp.height, longSide = Math.max(W, H);
       var k = longSide < 2000 ? 2000 / longSide : 1;
       var cv = document.createElement("canvas");
@@ -6829,24 +6849,26 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
       return { img: cv, w: cv.width, h: cv.height, ctx: ctx };
-    }).catch(function (err) {
-      if (timer) clearTimeout(timer);
-      // endpoint or Earth Engine refused → the tile-stitch fallback
-      return buildClassifiedCanvas(r);
     });
   }
   /** fire-and-forget: ask the server to render (and cache) the export PNG
    *  right after a successful run, so clicking Export later is instant.
-   *  Silent by design — errors just leave the click-on path to do the work. */
+   *  The promise is kept: an Export click while the warm-up is still running
+   *  reuses it (no duplicate Earth Engine render) — and once it resolves the
+   *  bytes come from the server-side cache in ~1 s. */
+  var pngWarm = null;
   function warmExportPng(input) {
     if (!isLive() || !input || !input.aoiGeo) return;
     try {
       var url = liveUrl().replace(/\/api\/gee\/run$/, "/api/gee/export-png");
-      fetch(url, {
+      var body = JSON.stringify(Object.assign({}, input, { kind: "run", thumbDim: 1400 }));
+      pngWarm = fetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(Object.assign({}, input, { kind: "run", thumbDim: 1400 }))
-      }).catch(function () { /* silent warm */ });
+        body: body
+      });
+      pngWarm._dvBody = body;
+      pngWarm.catch(function () { /* silent warm */ });
     } catch (e) { /* silent */ }
   }
   /** the run input for the current UI state (used when a replayed result
