@@ -32,14 +32,14 @@ const RUN_L1 = {
     { classId: 3, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#9CA3AF", areaKm2: 78.1, percent: 13.1, pa: 0.433, ua: 0.538, f1: 0.538, support: 108 },
     { classId: 1, code: "WTR", en: "Water", ar: "مياه", color: "#2563EB", areaKm2: 47.0, percent: 7.9, pa: 0.89, ua: 0.92, f1: 0.9, support: 108 },
   ],
-  confusion: { classIds: [1, 2, 3, 4], rows: [[96, 2, 4, 6], [3, 78, 27, 0], [1, 12, 47, 48], [2, 0, 3, 103]], total: 432, nValPoints: 108 },
-  nImages: 41, nTrain: 2098, nVal: 910, nValPoints: 108, durationMs: 29500,
+  confusion: { classIds: [1, 2, 3, 4], rows: [[96, 2, 4, 6], [3, 78, 27, 0], [1, 12, 47, 48], [2, 0, 3, 103]], total: 432, nValPoints: 340 },
+  nImages: 41, nTrain: 3185, nVal: 2380, nValPoints: 340, nTrainPoints: 455, durationMs: 29500,
   downloadUrl: "https://download.test/dv_landcover_rf.tif", downloadScaleM: 30,
-  areaKm2: 595.6, sampleSource: "builtin", nReferencePoints: 360,
-  sampleClassCounts: { "1": 36, "2": 36, "3": 36, "4": 360 - 108 },
+  areaKm2: 595.6, sampleSource: "builtin", nReferencePoints: 795,
+  sampleClassCounts: { "1": 76, "2": 76, "3": 76, "4": 567 },
   notes: ["builtin_training"],
 };
-// Level 2 — crop-type winter run (9 classes, 294 points, honest low accuracy)
+// Level 2 — crop-type winter run (9 classes, 370 train / 279 validation points, honest low accuracy)
 const RUN_L2 = {
   mode: "live", algorithm: "rf", scheme: "crops", family: "winter", season: "winter",
   dateFrom: "2025-11-01", dateTo: "2026-04-30",
@@ -54,10 +54,10 @@ const RUN_L2 = {
     { classId: 11, code: "WTR", en: "Water", ar: "مياه", color: "#2563EB", areaKm2: 47.0, percent: 7.9, pa: 0.89, ua: 0.92, f1: 0.9, support: 108 },
   ],
   confusion: { classIds: [1, 4, 10], rows: [[11, 8, 7], [4, 14, 9], [0, 1, 22]] },
-  nImages: 41, nTrain: 1717, nVal: 747, durationMs: 61000,
+  nImages: 41, nTrain: 2590, nVal: 1953, nValPoints: 279, nTrainPoints: 370, durationMs: 61000,
   downloadUrl: "https://download.test/dv_crops_rf.tif",
-  areaKm2: 595.6, sampleSource: "builtin", nReferencePoints: 294,
-  sampleClassCounts: { "1": 36, "4": 42 },
+  areaKm2: 595.6, sampleSource: "builtin", nReferencePoints: 649,
+  sampleClassCounts: { "1": 83, "3": 65, "4": 85, "5": 59, "6": 59, "7": 70, "9": 76, "10": 76, "11": 76 },
   notes: ["builtin_training"],
 };
 const COMPARE = {
@@ -147,7 +147,7 @@ const COMPARE = {
   const rows = await page.locator("#class-table tbody tr").count();
   ok(rows === 4, "four land-cover rows", String(rows));
   const trainingLine = await page.locator("#training-set-line").textContent();
-  ok(/360/.test(trainingLine), "training provenance line shows the built-in 360 points", trainingLine);
+  ok(/455/.test(trainingLine) && /340/.test(trainingLine) && (/20 نقطة متطابقة|20 coordinate overlaps/).test(trainingLine), "training provenance line shows the professor's 455/340 split with the 20 removed overlaps", trainingLine);
 
   console.log("== 3. confusion matrix + GeoTIFF");
   ok(await page.locator("#confusion-wrap").isVisible(), "confusion matrix visible");

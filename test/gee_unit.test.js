@@ -47,27 +47,37 @@ function unwrap(r) { try { return JSON.parse(r.body); } catch (e) { return {}; }
   ok(E.activeClassIds("crops", "full").length === 11, "full family keeps all 11 (never sent with the crops scheme)");
   ok(E.activeClassIds("general", "winter").length === 4, "land cover: all 4 classes every season");
 
-  console.log("== built-in reference points (Validation_Samples_CSV.csv)");
+  console.log("== built-in reference points (professor's dedicated Train/Validation split)");
   const pts = E.referencePoints("crops");
-  ok(pts.length === 360, "360 reference points", pts.length);
+  ok(pts.length === 795, "795 reference points (455 train + 340 validation)", pts.length);
   ok(pts.every((p) => Number.isFinite(p.lon) && Number.isFinite(p.lat) && p.classId >= 1 && p.classId <= 11), "every point is well-formed");
+  ok(pts.every((p) => (p.role === "validation") === (p.split === 0.75)), "the role decides the side: validation ↔ 0.75, train ↔ 0.25");
+  const info = E.TRAINING_SET_INFO;
+  ok(info.nTrain === 455 && info.nVal === 340 && info.nOverlap === 20, "TRAINING_SET_INFO: 455 train / 340 val / 20 overlaps removed", info);
   const byClass = {};
   pts.forEach((p) => { byClass[p.classId] = (byClass[p.classId] || 0) + 1; });
-  ok(byClass[1] === 36 && byClass[2] === 42 && byClass[11] === 36, "class counts match the CSV (Wheat 36, Maize 42, Water 36)", byClass);
+  ok(byClass[1] === 83 && byClass[2] === 87 && byClass[11] === 76, "class counts match the CSVs (Wheat 83, Maize 87, Water 76)", byClass);
   const gen = E.referencePoints("general");
   const genCounts = {};
   gen.forEach((p) => { genCounts[p.classId] = (genCounts[p.classId] || 0) + 1; });
-  ok(genCounts[4] === 252 && genCounts[3] === 36 && genCounts[2] === 36 && genCounts[1] === 36, "land-cover roll-up: 252 cropland / 36 / 36 / 36", genCounts);
+  ok(genCounts[4] === 567 && genCounts[3] === 76 && genCounts[2] === 76 && genCounts[1] === 76, "land-cover roll-up: 567 cropland / 76 / 76 / 76", genCounts);
   ok(gen.every((p) => p.split === 0.25 || p.split === 0.75), "splits are exactly 0.25 / 0.75");
+  const train = pts.filter((p) => p.split === 0.25);
   const val = pts.filter((p) => p.split === 0.75);
-  ok(val.length >= 100 && val.length <= 120, "≈30 % validation points (" + val.length + " of 360)", val.length);
-  // per-class balance of the split
-  const perClass = {};
-  pts.forEach((p) => {
-    perClass[p.classId] = perClass[p.classId] || { train: 0, val: 0 };
-    perClass[p.classId][p.split === 0.75 ? "val" : "train"]++;
-  });
-  ok(Object.values(perClass).every((c) => c.val / (c.val + c.train) >= 0.25 && c.val / (c.val + c.train) <= 0.36), "the split keeps ~30 % per class", perClass);
+  ok(train.length === 455 && val.length === 340, "the professor's split is exact: 455 train / 340 validation", train.length + "/" + val.length);
+  // leakage: no coordinate may appear on both sides
+  const key = (p) => p.lon.toFixed(6) + "," + p.lat.toFixed(6);
+  const trainKeys = new Set(train.map(key));
+  ok(val.every((p) => !trainKeys.has(key(p))), "zero coordinate overlaps between train and validation (the 20 duplicates were removed from the validation side)");
+  // strict seasonal filtering applies to BOTH sides
+  const winter = new Set(E.activeClassIds("crops", "winter")), summer = new Set(E.activeClassIds("crops", "summer"));
+  const wTrain = train.filter((p) => winter.has(p.classId)), wVal = val.filter((p) => winter.has(p.classId));
+  const sTrain = train.filter((p) => summer.has(p.classId)), sVal = val.filter((p) => summer.has(p.classId));
+  ok(wTrain.length === 370 && wVal.length === 279, "winter: 370 training / 279 validation", wTrain.length + "/" + wVal.length);
+  ok(sTrain.length === 315 && sVal.length === 247, "summer: 315 training / 247 validation", sTrain.length + "/" + sVal.length);
+  // the grouped 70/30 split still exists for manually drawn points
+  const manual = E.assignSplit(Array.from({ length: 60 }, (_, i) => ({ classId: 1 + (i % 2), lon: 29.4 + i * 0.001, lat: 30.7 })));
+  ok(manual.length === 60 && manual.every((p) => p.split === 0.25 || p.split === 0.75), "manual points keep the grouped 70/30 split");
 
   console.log("== period resolution (season labelled by the year it ends)");
   ok(JSON.stringify(E.resolvePeriod({ season: "winter", year: 2026 })) === JSON.stringify({ start: "2025-11-01", end: "2026-04-30", season: "winter", family: "winter" }), "winter 2026 → Nov–Apr");
@@ -113,15 +123,15 @@ function unwrap(r) { try { return JSON.parse(r.body); } catch (e) { return {}; }
     rows.push({ classId: 12, x: [0.05, 0.05, 0.9, 0.1, 0.2, 0.1] });
   }
   const shuffled = rows.slice().sort(() => Math.random() - 0.5);
-  const train = shuffled.slice(0, 150), mval = shuffled.slice(150);
-  const model = E.mlpTrain(train, ["f1", "f2", "f3", "f4", "f5", "f6"], { hidden: 10, epochs: 300 });
+  const trainRows = shuffled.slice(0, 150), mval = shuffled.slice(150);
+  const model = E.mlpTrain(trainRows, ["f1", "f2", "f3", "f4", "f5", "f6"], { hidden: 10, epochs: 300 });
   ok(model.w1.length === 10 && model.classIds.join(",") === "1,4,12", "model shape + sorted class ids");
   ok([model.mean, model.std, model.w1.flat(), model.w2.flat(), model.b1, model.b2]
     .every((arr) => arr.every((v) => Number.isFinite(v))), "all weights finite");
   const cm = E.mlpConfusion(model, mval);
   ok(cm.oa > 0.9, "validation OA > 0.9 on separable data", cm.oa);
   ok(cm.rows.flat().reduce((s, v) => s + v, 0) === mval.length, "confusion counts sum to n");
-  const det = E.mlpTrain(train, ["f1", "f2", "f3", "f4", "f5", "f6"], { hidden: 10, epochs: 300 });
+  const det = E.mlpTrain(trainRows, ["f1", "f2", "f3", "f4", "f5", "f6"], { hidden: 10, epochs: 300 });
   ok(JSON.stringify(det.w1) === JSON.stringify(model.w1), "training is deterministic (same seed)");
 
   console.log("== GEEError shape");

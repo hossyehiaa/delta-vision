@@ -588,7 +588,9 @@
       setAbMode(on);
     }
   }
-  /** the 360 built-in reference points, coloured by their class in the current scheme */
+  /** the 795 built-in reference points, coloured by their class in the
+   *  current scheme — solid markers are the professor's 455 training
+   *  points, hollow ones the 340 withheld validation points */
   function buildGroundTruthLayer() {
     gtLayer.clearLayers();
     var pts = (D.REFERENCE_POINTS && D.REFERENCE_POINTS.points) || [];
@@ -597,8 +599,12 @@
       var id = scheme === "crops" ? p[0] : mapClassId(p[0]);
       var c = classById(id, scheme);
       if (!c) return;
-      var mark = L.circleMarker([p[2], p[1]], { radius: 3.5, color: "#ffffff", weight: 0.8, fillColor: c.color, fillOpacity: 0.95 });
-      mark.bindTooltip(className(c) + " (" + c.code + ")", { direction: "top" });
+      var validation = p[3] === "validation";   // 4th tuple element: the role
+      var mark = L.circleMarker([p[2], p[1]], {
+        radius: validation ? 4 : 3.5, color: "#ffffff", weight: 0.8,
+        fillColor: c.color, fillOpacity: validation ? 0.35 : 0.95
+      });
+      mark.bindTooltip(className(c) + " (" + c.code + ") · " + t(validation ? "ws.samples.roleValidation" : "ws.samples.roleTrain"), { direction: "top" });
       gtLayer.addLayer(mark);
     });
   }
@@ -1457,7 +1463,7 @@
       if (algo.group === "supervised") {
         samplesInfo = input.samplePoints && input.samplePoints.length >= 20 && distinctClasses(input.samplePoints) >= 2
           ? { source: "manual", n: input.samplePoints.length }
-          : { source: "builtin", n: D.REFERENCE_POINTS ? D.REFERENCE_POINTS.n : 360 };
+          : { source: "builtin", n: D.REFERENCE_POINTS ? D.REFERENCE_POINTS.n : 795 };
       }
       return {
         mode: "preview",
@@ -1636,6 +1642,7 @@
       classes: classes,
       confusion: jr.confusion || null,
       nValPoints: jr.nValPoints != null ? jr.nValPoints : null,
+      nTrainPoints: jr.nTrainPoints != null ? jr.nTrainPoints : null,
       nImages: jr.nImages != null ? jr.nImages : null,
       nTrain: jr.nTrain != null ? jr.nTrain : null,
       nVal: jr.nVal != null ? jr.nVal : null,
@@ -2345,18 +2352,29 @@
 
   function td(tr, text, cls) { var d = el("td", cls || "", text == null ? "—" : String(text)); tr.appendChild(d); return d; }
 
-  /** one-line provenance of the training set behind the current run */
+  /** one-line provenance of the training set behind the current run:
+   *  the professor's dedicated split (455 train / 340 validation, 20
+   *  coordinate overlaps removed) for built-in runs, 70/30 for manual
+   *  points — the exact counts stay visible at every level and season */
   function renderTrainingSetLine(r) {
     var old = document.getElementById("training-set-line"); if (old) old.remove();
     if (!r) return;
     if (r.mode !== "live" && r.mode !== "preview") return;
     var algo = I.algorithmByKey(r.algorithm);
     if (algo.group !== "supervised") return;
-    var src = r.sampleSource === "manual" ? t("ws.notes.manual_training") : t("ws.notes.builtin_training");
+    var builtin = r.sampleSource !== "manual";
+    var src = builtin ? t("ws.notes.builtin_training") : t("ws.notes.manual_training");
+    var val = r.nValPoints != null ? r.nValPoints : (r.confusion && r.confusion.nValPoints);
+    if (val == null) val = r.nVal;
+    var train = r.nTrainPoints != null ? r.nTrainPoints
+      : (r.nReferencePoints != null && val != null ? r.nReferencePoints - val : null);
+    if (train == null) train = builtin ? 455 : 0;
     var line = el("p", "hint", t("ws.results.trainingSet", {
-      source: src, n: fmt(r.nReferencePoints != null ? r.nReferencePoints : 360, 0),
+      source: src,
+      train: fmt(train, 0),
+      val: fmt(val != null ? val : 0, 0),
       k: fmt(r.activeClassIds ? r.activeClassIds.length : (r.classes || []).length, 0),
-      split: "70/30"
+      split: builtin ? t("ws.results.trainingSplitBuiltin") : t("ws.results.trainingSplitManual")
     }));
     line.id = "training-set-line";
     var run = $("#results-run");
@@ -2752,7 +2770,11 @@
     var total = cm.total;
     if (total == null) total = cm.rows.reduce(function (s, row) { return s + row.reduce(function (s2, v) { return s2 + v; }, 0); }, 0);
     var pts = cm.nValPoints != null ? cm.nValPoints : (r.nValPoints != null ? r.nValPoints : r.nVal);
-    return pts ? t("ws.results.confusionCaption", { pixels: fmt(total, 0), points: fmt(pts, 0) })
+    // the withheld side differs: the professor's dedicated validation set for
+    // built-in runs, the grouped 70/30 split for manually drawn points — the
+    // caption states which, so the matrix never misreads its own provenance
+    var split = r.sampleSource === "manual" ? t("ws.results.trainingSplitManual") : t("ws.results.confusionSplitBuiltin");
+    return pts ? t("ws.results.confusionCaption", { pixels: fmt(total, 0), points: fmt(pts, 0), split: split })
                : t("ws.results.confusionNoPoints", { pixels: fmt(total, 0) });
   }
   /** the classified raster on a canvas: live runs stitch EE tiles at z14

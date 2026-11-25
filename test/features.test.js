@@ -30,11 +30,11 @@ const RUN_L1 = {
     { classId: 3, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#9CA3AF", areaKm2: 78.1, percent: 13.1, pa: 0.433, ua: 0.538, f1: 0.538, support: 108 },
     { classId: 1, code: "WTR", en: "Water", ar: "مياه", color: "#2563EB", areaKm2: 47.0, percent: 7.9, pa: 0.89, ua: 0.92, f1: 0.9, support: 108 },
   ],
-  confusion: { classIds: [1, 2, 3, 4], rows: [[96, 2, 4, 6], [3, 78, 27, 0], [1, 12, 47, 48], [2, 0, 3, 103]], total: 432, nValPoints: 108 },
-  nImages: 41, nTrain: 2098, nVal: 910, nValPoints: 108, durationMs: 8000,
+  confusion: { classIds: [1, 2, 3, 4], rows: [[96, 2, 4, 6], [3, 78, 27, 0], [1, 12, 47, 48], [2, 0, 3, 103]], total: 432, nValPoints: 340 },
+  nImages: 41, nTrain: 3185, nVal: 2380, nValPoints: 340, nTrainPoints: 455, durationMs: 8000,
   downloadUrl: "https://download.test/dv_landcover_rf.tif", downloadScaleM: 30,
-  areaKm2: 595.6, sampleSource: "builtin", nReferencePoints: 360,
-  sampleClassCounts: { "1": 36, "2": 36, "3": 36, "4": 252 }, notes: ["builtin_training"],
+  areaKm2: 595.6, sampleSource: "builtin", nReferencePoints: 795,
+  sampleClassCounts: { "1": 76, "2": 76, "3": 76, "4": 567 }, notes: ["builtin_training"],
 };
 
 (async () => {
@@ -113,7 +113,7 @@ const RUN_L1 = {
   ok(await page.locator("#results-body").isVisible(), "results rendered");
   ok(calls.run === 1, "one run call so far", String(calls.run));
   const cap = await page.locator("#confusion-caption").textContent();
-  ok(/432/.test(cap) && /108/.test(cap), "confusion caption: 432 pixels from 108 withheld points", cap);
+  ok(/432/.test(cap) && /340/.test(cap) && (/withheld validation points|نقطة تحقق محجوزة/).test(cap) && (/professor's dedicated|تقسيم البروفيسور المخصص/).test(cap), "confusion caption: 432 pixels from 340 withheld validation points (the professor's split)", cap);
   const tl = await page.locator("#training-set-line").textContent();
   ok((tl.match(/Trained on/g) || []).length + (tl.match(/دُرِّب/g) || []).length === 1, "training line says 'trained on' exactly once", tl);
 
@@ -125,7 +125,7 @@ const RUN_L1 = {
   // exactly ONE provenance under Results: the training-set line, no note twin
   const notesTxt = (await page.locator("#run-notes").count()) ? await page.locator("#run-notes").textContent() : "";
   ok(!/built-in reference set|الطقم المرجعي المدمج|\(360 نقطة\)/.test(notesTxt), "no duplicate provenance note stacked under Results", (notesTxt || "").slice(0, 60));
-  ok(/\(360 points · 4 classes\)|\(360 نقطة · 4 فئات\)/.test(tl), "training line carries the counts exactly once", tl.slice(0, 80));
+  ok(/455 training · 340 validation|455 تدريب · 340 تحقق/.test(tl) && /20 coordinate overlaps removed|أُزيلت 20 نقطة متطابقة/.test(tl), "training line carries the professor's split counts", tl.slice(0, 110));
   // sub-season preset → From/To fields carry the preset's exact range
   const yr = parseInt(await page.inputValue("#year-select"), 10);
   await page.click('[data-season="early_winter"]');

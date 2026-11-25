@@ -81,8 +81,8 @@ for (const family of ["winter", "summer", "full"]) {
   }
 }
 ok(actOk, "active class lists equal scheme.json for both levels and every family");
-ok(I.activeClassIds("crops", "winter").join(",") === "1,3,4,5,6,7,9,10,11", "winter keeps 9 classes (294 points)");
-ok(I.activeClassIds("crops", "summer").join(",") === "2,5,6,7,8,9,10,11", "summer keeps 8 classes (252 points)");
+ok(I.activeClassIds("crops", "winter").join(",") === "1,3,4,5,6,7,9,10,11", "winter keeps 9 classes (370 train / 279 val points)");
+ok(I.activeClassIds("crops", "summer").join(",") === "2,5,6,7,8,9,10,11", "summer keeps 8 classes (315 train / 247 val points)");
 ok([2, 8].every((id) => I.activeClassIds("crops", "winter").indexOf(id) < 0), "winter strictly excludes Maize and Grapes");
 ok([1, 3, 4].every((id) => I.activeClassIds("crops", "summer").indexOf(id) < 0), "summer strictly excludes Wheat, Sugar Beet and Potato");
 ok(I.SCHEME_KEYS.join(",") === "general,crops" && I.DEFAULT_SCHEME === "general", "Level 1 (land cover) is the default scheme");
@@ -123,8 +123,10 @@ ok(Object.keys(D.SCHEMES.crops.signatures.summer).length === 8, "summer signatur
 ok(Object.keys(D.SCHEMES.general.signatures.winter).length === 4, "land-cover signatures exist for the 4 classes");
 const sigW = D.SCHEMES.crops.signatures.winter["1"];
 ok(Array.isArray(sigW) && sigW.length === 3 && sigW.every((v) => typeof v === "number" && isFinite(v)), "a signature = [mean, p10, p90] numbers");
-ok(D.REFERENCE_POINTS && D.REFERENCE_POINTS.n === 360 && Array.isArray(D.REFERENCE_POINTS.points) && D.REFERENCE_POINTS.points.length === 360, "360 built-in reference points");
-ok(D.REFERENCE_POINTS.points.every((p) => Array.isArray(p) && p.length === 3 && isFinite(p[0]) && isFinite(p[1]) && isFinite(p[2])), "each reference point = [classId, lon, lat]");
+ok(D.REFERENCE_POINTS && D.REFERENCE_POINTS.n === 795 && Array.isArray(D.REFERENCE_POINTS.points) && D.REFERENCE_POINTS.points.length === 795, "795 built-in reference points (455 train + 340 validation)");
+ok(D.REFERENCE_POINTS.points.every((p) => Array.isArray(p) && p.length === 4 && isFinite(p[0]) && isFinite(p[1]) && isFinite(p[2]) && (p[3] === "train" || p[3] === "validation")), "each reference point = [classId, lon, lat, role]");
+ok(D.REFERENCE_POINTS.points.filter((p) => p[3] === "train").length === 455 && D.REFERENCE_POINTS.points.filter((p) => p[3] === "validation").length === 340, "roles split exactly 455 / 340");
+ok(D.SCHEME_VERSION === 5, "SCHEME_VERSION 5 (stale cached runs miss)");
 ok(D.BOURJ.ring.length > 50 && D.BOURJ.ring[0][0] === D.BOURJ.ring[D.BOURJ.ring.length - 1][0], "built-in Borj El Arab boundary is a closed ring (" + D.BOURJ.ring.length + " vertices)");
 ok(Math.abs(D.BOURJ.areaM2 / 4200 - 141841.261) < 0.01, "Borj El Arab sample boundary = " + (D.BOURJ.areaM2 / 4200).toFixed(3) + " feddan");
 

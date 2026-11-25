@@ -56,6 +56,9 @@ const SCHEMES: Record<SchemeKey, SchemeDef> = {
 export const TRAINING_SET_INFO = {
   source: (TRAINING_DATA as any).source as string,
   points: (TRAINING_DATA as any).n as number,
+  nTrain: Number((TRAINING_DATA as any).n_train ?? 0),
+  nVal: Number((TRAINING_DATA as any).n_val ?? 0),
+  nOverlap: Number((TRAINING_DATA as any).n_overlap ?? 0),
 };
 
 export function classesOf(scheme: SchemeKey): CropClassDef[] {
@@ -209,6 +212,9 @@ export interface RunResult {
   confusion?: { classIds: number[]; rows: number[][]; total?: number; nValPoints?: number } | null;
   /** withheld test points (split ≥ 0.7) among the labelled input points */
   nValPoints?: number;
+  /** training points (split < 0.7) among the labelled input points — the
+   *  professor's dedicated split for builtin runs, 70/30 for manual points */
+  nTrainPoints?: number;
   nImages: number;
   nTrain: number;
   nVal: number;
@@ -622,8 +628,16 @@ export interface ReferencePoint {
   classId: number; lon: number; lat: number;
   /** 0.25 = train, 0.75 = validation (grouped per point) */
   split: number;
+  /** the professor's dedicated sets: 'train' | 'validation' (built-in points
+   *  only — manual points carry the grouped 70/30 split instead) */
+  role?: "train" | "validation";
 }
-const RAW_POINTS: Array<[number, number, number]> = (TRAINING_DATA as any).points;
+/* [classId, lon, lat, role] — role decides the side: 'train' points train the
+ * classifier, 'validation' points are withheld. The 20 exact coordinate
+ * overlaps between the professor's two files were removed from the VALIDATION
+ * side (455 train / 340 strictly disjoint validation), so no point — and no
+ * pixel sampled around it — is ever seen on both sides. */
+const RAW_POINTS: Array<[number, number, number, string]> = (TRAINING_DATA as any).points;
 
 /** Deterministic, per-class balanced 70/30 split: the points of one class
  *  are ordered by longitude and every 10th index in {2,5,8} is withheld
@@ -649,15 +663,22 @@ export function assignSplit<T extends { classId: number; lon: number; lat: numbe
   return out;
 }
 
-/** the built-in reference points, class ids mapped to the run's scheme */
+/** the built-in reference points, class ids mapped to the run's scheme.
+ *  The professor's dedicated split is authoritative: a 'train' point is a
+ *  training pixel, a 'validation' point a withheld test pixel — every pixel
+ *  sampled around one point stays on that point's side, so the split is
+ *  leakage-free by construction. */
 export function referencePoints(scheme: SchemeKey): ReferencePoint[] {
-  return assignSplit(
-    RAW_POINTS.map(([classId, lon, lat]) => ({
+  return RAW_POINTS.map(([classId, lon, lat, role]) => {
+    const validation = role === "validation";
+    return {
       classId: mapClassId(Number(classId), scheme),
       lon: Number(lon),
       lat: Number(lat),
-    }))
-  );
+      role: validation ? "validation" : "train",
+      split: validation ? 0.75 : 0.25,
+    };
+  });
 }
 
 /** training region: the AOI united with the sample-point bounding box, so
@@ -725,8 +746,10 @@ function manualSampleState(
 /** Choose the labelled point set for a supervised run:
  *  1. the user's manual points when at least 20 valid points across ≥ 2
  *     classes were provided — they REPLACE the built-in set;
- *  2. otherwise the built-in 360-point reference set;
- *  3. out-of-season classes are dropped (strict seasonal filtering). */
+ *  2. otherwise the built-in reference set — the professor's dedicated
+ *     455-point training / 340-point validation split (roles carry the side);
+ *  3. out-of-season classes are dropped from BOTH sides (strict seasonal
+ *     filtering). */
 function selectTrainingPoints(opts: {
   scheme: SchemeKey;
   family: string;
@@ -1145,6 +1168,7 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   let confusion: { classIds: number[]; rows: number[][]; total?: number; nValPoints?: number } | null = null;
   let nTrain = 0, nVal = 0;
   let nValPoints = 0;
+  let nTrainPoints = 0;
   let accP: Promise<any> | null = null;
   let training: any = null;   // the run's training table (supervised branch)
   let noteCode: string | undefined;
@@ -1180,6 +1204,7 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     // (the compact server-side graph — identical request → EE's own
     // computation cache makes repeat runs fast)
     nValPoints = trainingPoints.filter((pt) => (pt.split ?? 0) >= 0.7).length;
+    nTrainPoints = trainingPoints.length - nValPoints;
     training = sampleTraining(feats, trainingFC(trainingPoints));
     const train = training.filter(ee.Filter.lt("split", 0.7));
     const val = training.filter(ee.Filter.gte("split", 0.7));
@@ -1439,6 +1464,7 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     downloadScaleM: downloadScaleM ?? (downloadUrl ? tifScale : undefined),
     thumbUrl: null,
     nValPoints: nValPoints || nVal,
+    nTrainPoints: nTrainPoints || nTrain,
     noteCode,
     notes: notes.length ? notes : undefined,
     areaKm2: +(aoiM2 / 1e6).toFixed(2),

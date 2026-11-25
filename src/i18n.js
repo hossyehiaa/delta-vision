@@ -18,8 +18,8 @@
   // ------------------------------------------------------------------ domain data
   /** Level 1 "general" = land cover (4 classes). Level 2 "crops" = the 11
    *  crop-type classes of the built-in sample set, filtered by season:
-   *  winter family keeps 9 classes (294 of 360 points), summer family keeps
-   *  8 (252 points) — off-season crops never share a model. */
+   *  winter family keeps 9 classes (370 training / 279 validation points),
+   *  summer keeps 8 (315 / 247) — off-season crops never share one model. */
   var SCHEMES = {
     general: {
       key: "general",
@@ -209,7 +209,7 @@
     home: {
       badge: "Sentinel-2 · Google Earth Engine · Nile Delta",
       title: "Two-level maps of the Delta, measured in feddan",
-      subtitle: "Delta Vision classifies Sentinel-2 imagery at two levels trained on the same 360 verified field points: a reliable land-cover level (Water, Urban, Bare Land, Cropland) and a seasonally filtered crop-type level with the accuracy measured on a held-out 30 % — never inflated. Draw a study area or upload your own data, choose a period and an algorithm, and read the result on the map and in the table.",
+      subtitle: "Delta Vision classifies Sentinel-2 imagery at two levels trained on the professor's dedicated field sets — 455 training points and 340 strictly disjoint validation points: a reliable land-cover level (Water, Urban, Bare Land, Cropland) and a seasonally filtered crop-type level with the accuracy measured on that withheld validation set — never inflated. Draw a study area or upload your own data, choose a period and an algorithm, and read the result on the map and in the table.",
       ctaPrimary: "Start classifying", ctaSecondary: "How it works",
       chipAlgo: "11 algorithms", chipRes: "10 m pixels", chipShp: "SHP & CSV upload", chipLevels: "2 classification levels",
       heroAlt: "Fields and a village of the Nile Delta seen from the air",
@@ -222,9 +222,9 @@
       slides: [
         { kicker: "From orbit", title: "The Delta, every five days", text: "The two Sentinel-2 satellites revisit each patch of the Delta every five days. Delta Vision composites the cloud-free scenes of the season into one feature stack per pixel." },
         { kicker: "In the field", title: "Every parcel keeps its identity", text: "Upload the boundaries of your fields, district or command area as a shapefile or GeoJSON. Each parcel is outlined on the map and listed with its own area in feddan." },
-        { kicker: "Trained on real points", title: "360 verified field samples", text: "Every supervised model trains on a built-in reference set of 360 labelled points. Accuracy is measured on a held-out 30 % split, grouped by point, before any number reaches the screen." },
-        { kicker: "Winter · November to April", title: "9 winter classes", text: "In the winter family the model competes Wheat, Sugar Beet, Potato, Citrus, Medicinal Plants, Vegetables, Bare Land, Urban and Water — 294 points. Maize and Grapes are strictly excluded as out of season." },
-        { kicker: "Summer · May to October", title: "8 summer classes", text: "In the summer family the model competes Maize, Grapes, Citrus, Medicinal Plants, Vegetables, Bare Land, Urban and Water — 252 points. Wheat, Sugar Beet and Potato are strictly excluded." }
+        { kicker: "Trained on real points", title: "455 training · 340 validation", text: "Every supervised model trains on the professor's dedicated sets: 455 training points, validated on 340 strictly disjoint points (20 coordinate overlaps between the two files were removed from the validation side). Accuracy is measured on that withheld set, grouped by point, before any number reaches the screen." },
+        { kicker: "Winter · November to April", title: "9 winter classes", text: "In the winter family the model competes Wheat, Sugar Beet, Potato, Citrus, Medicinal Plants, Vegetables, Bare Land, Urban and Water — 370 training / 279 validation points. Maize and Grapes are strictly excluded as out of season." },
+        { kicker: "Summer · May to October", title: "8 summer classes", text: "In the summer family the model competes Maize, Grapes, Citrus, Medicinal Plants, Vegetables, Bare Land, Urban and Water — 315 training / 247 validation points. Wheat, Sugar Beet and Potato are strictly excluded." }
       ],
       product: {
         kicker: "Outputs", watermark: "Output", title: "What every run delivers",
@@ -234,7 +234,7 @@
         items: [
           { title: "Classification map", text: "Every pixel coloured by class over satellite imagery, with a clickable legend, opacity control and an A/B slider that wipes between image and classification." },
           { title: "Feddan report", text: "Area of every class in feddan, km² and percent, per parcel and for the whole study area — exportable as CSV and printable as a report." },
-          { title: "Accuracy report", text: "Overall accuracy, Kappa and per-class PA/UA/F1 from the held-out 30 % of the sample points, plus the full confusion matrix." },
+          { title: "Accuracy report", text: "Overall accuracy, Kappa and per-class PA/UA/F1 from the withheld validation points, plus the full confusion matrix." },
           { title: "Decision support", text: "For crop classes, indicative yield and water figures per feddan — planning numbers, clearly labelled as indicative." }
         ]
       },
@@ -242,7 +242,7 @@
         title: "Built for the Delta workflow",
         text: "From imagery to a defensible table in four steps — in Arabic first.",
         cta: "Open the workspace",
-        note: "Delta Vision runs the same pipeline as the graduation-project engine behind it: Sentinel-2 L2A, SCL cloud masking, monthly median composites, and a 70/30 grouped split of the reference points.",
+        note: "Delta Vision runs the same pipeline as the graduation-project engine behind it: Sentinel-2 L2A, SCL cloud masking, monthly median composites, and the professor's dedicated train/validation split (455 training / 340 strictly disjoint validation points).",
         items: [
           { title: "Upload a shapefile or GeoJSON", text: ".shp with .dbf, .prj and .cpg, a .zip of them, or a .geojson — parcels are outlined on the map with their own feddan areas." },
           { title: "Pick a period, not just a season", text: "Whole seasons or 4-month agronomic windows (Oct–Jan, Feb–May, Jun–Sep); a custom range detects its dominant season and filters the classes for you." },
@@ -264,7 +264,7 @@
         text: "Free to try with the demo account — every algorithm runs for real on Earth Engine.",
         button: "Create an account", login: "I already have one"
       },
-      aiNote: "Accuracy figures shown anywhere in the app are measured on the held-out split of the 360-point reference set — never hand-tuned or inflated."
+      aiNote: "Accuracy figures shown anywhere in the app are measured on the professor's withheld 340-point validation set — never hand-tuned or inflated."
     },
 
     login: {
@@ -302,7 +302,7 @@
         generalSub: "4 classes",
         crops: "Crop type",
         cropsSub: "seasonal",
-        hint: "Both levels train on the same 360 verified points. Land cover is the reliable level; crop type shows the real measured seasonal accuracy — spectral overlap between crop types is significant, so always read the accuracy panel.",
+        hint: "Both levels train on the professor's dedicated sets (455 training / 340 validation points). Land cover is the reliable level; crop type shows the real measured seasonal accuracy — spectral overlap between crop types is significant, so always read the accuracy panel.",
         generalHint: "Water · Urban · Bare land · Cropland — the level with the strongest measured accuracy (~85 %).",
         cropsHint: "The 11 crop classes of the sample set, strictly filtered by season."
       },
@@ -359,17 +359,18 @@
       },
       samples: {
         title: "Training samples",
-        hint: "Built-in: the 360 verified reference points (Borj El Arab area) train every run. Add your own points — at least 20 over 2 classes — to train on them instead.",
+        hint: "Built-in: the professor's dedicated sets (455 training / 340 validation points, Borj El Arab area) train every run. Add your own points — at least 20 over 2 classes — to train on them instead.",
         class: "Class",
         pick: "Pick points", stop: "Stop picking", pickHint: "Click the map to add points of class: {class}",
         upload: "Upload CSV", clear: "Clear",
-        none: "No manual points — the built-in 360-point reference set will train the run.",
+        none: "No manual points — the professor's dedicated sets (455 training / 340 validation) will train the run.",
         few: "{n} points over {k} classes — 20 points over 2 classes are needed before they replace the built-in set.",
         ok: "{n} points over {k} classes — your points replace the built-in set.",
         unused: "This algorithm trains itself: the sample set is not used.",
         loaded: "{n} samples loaded.", skipped: " {n} rows skipped.", inactive: "out of season",
         csvHint: "CSV or semicolon-separated; columns lon/lat/class or POINT_X/POINT_Y/ClassName — class can be the code (WHT), the id (1) or the name (Wheat).",
-        groundTruth: "Ground-truth points", gtHint: "Show the 360 built-in reference points on the map, coloured by class."
+        groundTruth: "Ground-truth points", gtHint: "Show the 795 built-in reference points on the map, coloured by class (solid = training, hollow = withheld validation).",
+        roleTrain: "training point", roleValidation: "validation point"
       },
       run: "Run classification", running: "Running…",
       historyBtn: "History", compareBtn: "Compare algorithms", leagueBtn: "Accuracy league",
@@ -412,12 +413,14 @@
         geojsonOk: "GeoJSON downloaded: {n} features, {area} feddan", geojsonEmpty: "Draw or load a study area first.",
         stageFetch: "Fetching Sentinel-2 imagery…", stageTrain: "Training the model…", stageRender: "Rendering the map…",
         fromCache: "shown from cache", rerun: "Re-run fresh",
-        confusionCaption: "Pixel-based validation: {pixels} pixels sampled from {points} withheld test points (70/30 split by point).",
+        confusionCaption: "Pixel-based validation: {pixels} pixels sampled from {points} withheld validation points ({split}).",
         confusionNoPoints: "Pixel-based validation: {pixels} validation pixels.",
         signatureTitle: "Reference signatures — {season}",
         signatureText: "Mean NDVI and the 10–90 % range of each class, measured at the built-in reference points.",
         insight: "Measured accuracy is low at this level: crop types overlap strongly in the Sentinel-2 signal. Switch to the land-cover level for a reliable map, or add crop-specific samples.",
-        trainingSet: "{source} ({n} points · {k} classes) · {split} split"
+        trainingSet: "{source} — {train} training · {val} validation ({split}) · {k} classes",
+        trainingSplitBuiltin: "20 coordinate overlaps removed", trainingSplitManual: "70/30 by point",
+        confusionSplitBuiltin: "the professor's dedicated train/validation split"
       },
       history: {
         title: "Run history", close: "Close", text: "Every finished run of this account, newest first.",
@@ -446,7 +449,7 @@
       samples_far: "The study area lies far from the built-in sample set — treat the result with care.",
       season_detected: "The custom range spans both seasons: the dominant one was used, so winter and summer crops stay separated.",
       weak_accuracy: "Measured accuracy is low at this level: crop types overlap strongly in the Sentinel-2 signal.",
-      builtin_training: "Trained on the built-in reference set",
+      builtin_training: "Trained on the professor's dedicated field sets",
       manual_training: "Trained on your uploaded points"
     },
     },
@@ -480,11 +483,11 @@
 
     algo: {
       title: "Algorithms",
-      subtitle: "Eleven ways to turn one feature stack into a map — all trained on the same 360 verified points and measured on the same held-out 30 %.",
+      subtitle: "Eleven ways to turn one feature stack into a map — all trained on the same 455 professor training points and measured on the same withheld 340 validation points.",
       cta: "Open the workspace",
       group: { supervised: "Supervised", unsupervised: "Unsupervised", knowledge: "Knowledge-based" },
       groupText: {
-        supervised: "A model is fitted to the labelled reference points, then applied to every pixel. Accuracy is measured on the held-out 30 % of the points.",
+        supervised: "A model is fitted to the 455 training points, then applied to every pixel. Accuracy is measured on the 340 withheld validation points.",
         unsupervised: "Pixels are grouped by spectral similarity alone — no labels, no accuracy: a structure map.",
         knowledge: "No training at all: pixels are matched to the class statistics measured at the reference points."
       },
@@ -502,11 +505,11 @@
         gtb: "Boosted shallow trees built one after another, each correcting the previous one's mistakes. Often the closest challenger to the random forest on small sample sets.",
         nb: "Gaussian Naive Bayes: per class and per band it assumes an independent normal distribution — fast, simple, and a useful baseline for what the bands alone can explain.",
         mlp: "A one-hidden-layer neural network trained in the server and replayed per pixel inside Earth Engine as band math — the same network, the same result, at planetary scale.",
-        knn: "A pixel is labelled by the majority of its k nearest training pixels in feature space. With 360 reference points it behaves like a local memory of the fields.",
+        knn: "A pixel is labelled by the majority of its k nearest training pixels in feature space. With 455 training points it behaves like a local memory of the fields.",
         mindist_e: "Every pixel joins the class whose mean is nearest in Euclidean distance — the classic nearest-mean classifier, transparent and fast.",
         mindist_m: "The same nearest-mean idea, but distances are scaled by the covariance of the training data, so correlated bands stop dominating. Runs on the 9 decorrelated summary bands.",
         kmeans: "Pixels are clustered into k spectral groups with no labels at all — the map to reach for when you want structure, not names.",
-        signature: "No training: each pixel is scored against the mean/std statistics measured at the 360 reference points with a Gaussian naive-Bayes distance. An instant estimate, clearly labelled as such."
+        signature: "No training: each pixel is scored against the mean/std statistics measured at the built-in reference points with a Gaussian naive-Bayes distance. An instant estimate, clearly labelled as such."
       },
       protocol: {
         title: "The pipeline behind every run",
@@ -514,8 +517,8 @@
           { title: "A feature stack per pixel", text: "For every pixel the engine stacks monthly medians of NDVI, NDWI and NDMI for the period, NDVI statistics (p10, median, p90, mean, std) and the B4/B8/B11/B12 medians — 21 to 45 bands depending on the window." },
           { title: "Cloud masking", text: "Sentinel-2 L2A scene-classification pixels marked as cloud, shadow or cirrus are removed before any composite; the cloud-percentage ceiling is yours to set." },
           { title: "Seasonal class filtering", text: "The period's season family decides the class list: winter windows keep the 9 winter classes, summer windows the 8 summer classes — off-season crops never enter a model." },
-          { title: "Training on the reference points", text: "Features are sampled at the 360 labelled points (AOI plus the sample area), about 7 pixels per point, and split 70/30 per class with all pixels of a point kept on the same side." },
-          { title: "Measured accuracy", text: "OA, Kappa and per-class PA/UA/F1 are computed on the held-out 30 % only — the numbers on the screen are measurements, not expectations." }
+          { title: "Training on the reference points", text: "Features are sampled at the labelled points (the study area plus the sample area), about 7 pixels per point. The professor's split decides the side: pixels of a training point train, pixels of a validation point test — all pixels of one point stay on the same side." },
+          { title: "Measured accuracy", text: "OA, Kappa and per-class PA/UA/F1 are computed on the withheld validation points only — the numbers on the screen are measurements, not expectations." }
         ]
       }
     },
@@ -540,10 +543,10 @@
         { title: "Export", text: "The class table as CSV, the classified raster as GeoTIFF, and the whole report through the print view." }
       ],
       faq: [
-        { q: "Where do the training points come from?", a: "A verified reference set of 360 labelled points in the Borj El Arab area, built into the engine. Upload your own CSV (20+ points over 2 classes) to train on your data instead." },
+        { q: "Where do the training points come from?", a: "The professor's dedicated sets: 455 training points and 340 strictly disjoint validation points in the Borj El Arab area, built into the engine. Upload your own CSV (20+ points over 2 classes) to train on your data instead." },
         { q: "Why two classification levels?", a: "The reference set separates Water, Urban, Bare land and Cropland reliably (~85 % measured), but crop types overlap strongly in the Sentinel-2 signal. Level 1 gives you the reliable map; Level 2 gives the seasonal detail with its honest measured accuracy." },
         { q: "Why are some classes missing in some periods?", a: "Winter and summer crops never share one model: winter windows exclude Maize and Grapes (294 points stay), summer windows exclude Wheat, Sugar Beet and Potato (252 points stay). A badge in the workspace always shows the active and the excluded classes." },
-        { q: "How is accuracy measured?", a: "The reference points are split 70/30 per class, grouped so all pixels of one point stay on the same side. Every accuracy number in the app comes from the held-out 30 % only." },
+        { q: "How is accuracy measured?", a: "The professor's dedicated split decides the side: 455 training points train, 340 strictly disjoint validation points test, and all pixels of one point stay on the same side. Every accuracy number in the app comes from those withheld validation points only." },
         { q: "Which algorithm should I use?", a: "Random Forest is the safest default. The accuracy league trains all nine supervised algorithms on the same split and ranks them — try it before writing the report." },
         { q: "What is the instant scan?", a: "A no-training estimate: each pixel is scored against the class statistics measured at the reference points. Instant, clearly labelled as an estimate, useful as a first look." },
         { q: "Are the yield and water numbers measurements?", a: "No — they are indicative Egyptian planning figures per feddan, labelled as such everywhere they appear." }
@@ -560,12 +563,12 @@
       title: "Delta Vision — classification report",
       studyArea: "Study area", period: "Period", algorithm: "Algorithm", level: "Level",
       params: "Parameters", generated: "Generated",
-      disclaimer: "Areas are geodesic (WGS84). Accuracy is measured on the held-out 30 % of the reference points. Indicative yield and water figures are planning values, not measurements."
+      disclaimer: "Areas are geodesic (WGS84). Accuracy is measured on the 340 withheld validation points. Indicative yield and water figures are planning values, not measurements."
     },
 
     footer: {
       links: "Delta Vision", credits: "Credits",
-      about: "Delta Vision turns Sentinel-2 imagery into two-level land-cover and crop maps of the Nile Delta, trained on 360 verified field points and reported in feddan.",
+      about: "Delta Vision turns Sentinel-2 imagery into two-level land-cover and crop maps of the Nile Delta, trained on the professor's 455-point field set and validated on 340 disjoint points, reported in feddan.",
       data: "Imagery: Copernicus Sentinel-2 (ESA) processed on Google Earth Engine.",
       software: "Built as an Arabic-first single-page app with a serverless Earth Engine backend.",
       build: "Class scheme, reference statistics and this site all come from the same data file.",
@@ -593,7 +596,7 @@
     home: {
       badge: "Sentinel-2 · Google Earth Engine · دلتا النيل",
       title: "خرائط للدلتا على مستويين، بالفدان",
-      subtitle: "يصنّف دلتا فيجن صور Sentinel-2 على مستويين يُدرَّبان على 360 نقطة حقلية موثّقة: مستوى غطاء أرضي موثوق (مياه، عمران، أرض بور، أراضٍ زراعية)، ومستوى محاصيل مُرشَّح موسميًا تُعرض دقته الحقيقية المقاسة على 30% محتجزة — بلا أي تضخيم. ارسم منطقة دراسة أو ارفع بياناتك، واختر الفترة والخوارزمية، واقرأ النتيجة على الخريطة وفي الجدول.",
+      subtitle: "يصنّف دلتا فيجن صور Sentinel-2 على مستويين يُدرَّبان على أطقم البروفيسور المخصصة — 455 نقطة تدريب و340 نقطة تحقق منفصلة تمامًا: مستوى غطاء أرضي موثوق (مياه، عمران، أرض بور، أراضٍ زراعية)، ومستوى محاصيل مُرشَّح موسميًا تُعرض دقته الحقيقية المقاسة على طقم التحقق المحجوز — بلا أي تضخيم. ارسم منطقة دراسة أو ارفع بياناتك، واختر الفترة والخوارزمية، واقرأ النتيجة على الخريطة وفي الجدول.",
       ctaPrimary: "ابدأ التصنيف", ctaSecondary: "كيف يعمل؟",
       chipAlgo: "١١ خوارزمية", chipRes: "دقة 10 م", chipShp: "رفع SHP و CSV", chipLevels: "مستويان للتصنيف",
       heroAlt: "حقول وقرية في دلتا النيل من الجو",
@@ -606,9 +609,9 @@
       slides: [
         { kicker: "من المدار", title: "الدلتا كل خمسة أيام", text: "يقوم قمرا Sentinel-2 بزيارة كل بقعة من الدلتا كل خمسة أيام. يجمع دلتا فيجن مشاهد الموسم الخالية من السحب في حزمة صفات واحدة لكل بكسل." },
         { kicker: "في الحقل", title: "كل قطعة تحتفظ بهويتها", text: "ارفع حدود حقولك أو قريتك أو منطقتك كملف شكل أو GeoJSON؛ تُرسَم حدود كل قطعة على الخريطة وتُدرَج مساحتها بالفدان." },
-        { kicker: "تدريب على نقاط حقيقية", title: "360 عينة حقلية موثّقة", text: "كل نموذج موجَّه يُدرَّب على طقم مرجعي مدمج من 360 نقطة معنونة. تُقاس الدقة على 30% محتجزة، مجمّعة بالنقطة، قبل أن يصل أي رقم إلى الشاشة." },
-        { kicker: "الشتوية · نوفمبر–أبريل", title: "9 فئات شتوية", text: "في الفصل الشتوي تنافس 9 فئات: القمح والبنجر والبطاطس والموالح والنباتات الطبية والخضروات والأرض البور والعمران والمياه — 294 نقطة، مع استبعاد الذرة والعنب قطعًا لخروجهما عن الموسم." },
-        { kicker: "الصيفية · مايو–أكتوبر", title: "8 فئات صيفية", text: "في الفصل الصيفي تنافس 8 فئات: الذرة والعنب والموالح والنباتات الطبية والخضروات والأرض البور والعمران والمياه — 252 نقطة، مع استبعاد القمح والبنجر والبطاطس قطعًا." }
+        { kicker: "تدريب على نقاط حقيقية", title: "455 تدريب · 340 تحقق", text: "كل نموذج موجَّه يُدرَّب على أطقم البروفيسور: 455 نقطة تدريب، والتحقق على 340 نقطة منفصلة تمامًا (أُزيلت 20 نقطة متطابقة الإحداثيات من جهة التحقق). تُقاس الدقة على الطقم المحجوز، مجمّعة بالنقطة، قبل أن يصل أي رقم إلى الشاشة." },
+        { kicker: "الشتوية · نوفمبر–أبريل", title: "9 فئات شتوية", text: "في الفصل الشتوي تنافس 9 فئات: القمح والبنجر والبطاطس والموالح والنباتات الطبية والخضروات والأرض البور والعمران والمياه — 370 تدريب / 279 تحقق، مع استبعاد الذرة والعنب قطعًا لخروجهما عن الموسم." },
+        { kicker: "الصيفية · مايو–أكتوبر", title: "8 فئات صيفية", text: "في الفصل الصيفي تنافس 8 فئات: الذرة والعنب والموالح والنباتات الطبية والخضروات والأرض البور والعمران والمياه — 315 تدريب / 247 تحقق، مع استبعاد القمح والبنجر والبطاطس قطعًا." }
       ],
       product: {
         kicker: "المخرجات", watermark: "المخرج", title: "ما تقدمه كل عملية تشغيل",
@@ -618,7 +621,7 @@
         items: [
           { title: "خريطة التصنيف", text: "كل بكسل ملوّن حسب فئته فوق صورة القمر الصناعي، مع مفتاح قابل للنقر وتحكم في الشفافية وشريط مقارنة يمسح بين الصورة والتصنيف." },
           { title: "تقرير الفدان", text: "مساحة كل فئة بالفدان والكم² والنسبة، لكل قطعة ولكل منطقة الدراسة — قابل للتصدير CSV وللطباعة كتقرير." },
-          { title: "تقرير الدقة", text: "الدقة الكلية ومعامل Kappa وPA/UA/F1 لكل فئة من الـ30% المحتجزة من نقاط العينات، مع مصفوفة الالتباس كاملة." },
+          { title: "تقرير الدقة", text: "الدقة الكلية ومعامل Kappa وPA/UA/F1 لكل فئة من نقاط التحقق المحجوزة، مع مصفوفة الالتباس كاملة." },
           { title: "دعم القرار", text: "للفئات المحصولية: أرقام إنتاجية ومياه استرشادية للفدان — أرقام تخطيط توصف في كل موضع بأنها استرشادية." }
         ]
       },
@@ -626,7 +629,7 @@
         title: "مبني لسير عمل الدلتا",
         text: "من الصورة إلى جدول يمكن الدفاع عنه في أربع خطوات — بالعربية أولًا.",
         cta: "افتح مساحة العمل",
-        note: "يشغّل دلتا فيجن نفس خط أنابيب محرك مشروع التخرج الكامن خلفه: Sentinel-2 L2A وقناع السحب SCL ووسائط شهرية وتقسيم 70/30 مجمّع لنقاط المرجع.",
+        note: "يشغّل دلتا فيجن نفس خط أنابيب محرك مشروع التخرج الكامن خلفه: Sentinel-2 L2A وقناع السحب SCL ووسائط شهرية، مع تقسيم البروفيسور المخصص (455 تدريب / 340 تحقق منفصلة).",
         items: [
           { title: "ارفع ملف شكل أو GeoJSON", text: "ملف .shp مع .dbf و.prj و.cpg، أو .zip يجمعها، أو ملف .geojson — تُرسَم القطع على الخريطة بمساحاتها بالفدان." },
           { title: "اختر فترة لا موسمًا فقط", text: "مواسم كاملة أو نوافذ زراعية 4 أشهر (أكتوبر–يناير، فبراير–مايو، يونيو–سبتمبر)؛ والمدى المخصص يكتشف موسمه السائد ويرشّح الفئات تلقائيًا." },
@@ -648,7 +651,7 @@
         text: "جرّبه مجانًا بالحساب التجريبي — كل خوارزمية تعمل فعلًا على Earth Engine.",
         button: "أنشئ حسابًا", login: "لديّ حساب بالفعل"
       },
-      aiNote: "أرقام الدقة المعروضة في أي موضع بالتطبيق مقاسة على الجزء المحتجز من نقاط المرجع الـ360 — لا تُضبط يدويًا ولا تُضخّم."
+      aiNote: "أرقام الدقة المعروضة في أي موضع بالتطبيق مقاسة على طقم التحقق المحجوز (340 نقطة) — لا تُضبط يدويًا ولا تُضخّم."
     },
 
     login: {
@@ -686,7 +689,7 @@
         generalSub: "4 فئات",
         crops: "المحاصيل",
         cropsSub: "موسمي",
-        hint: "يُدرَّب المستويان على 360 نقطة موثّقة. غطاء الأرض هو المستوى الموثوق؛ والمحاصيل تعرض دقتها الموسمية المقاسة فعلًا — التداخل الطيفي بين المحاصيل كبير، فاقرأ لوحة الدقة دائمًا.",
+        hint: "يُدرَّب المستويان على أطقم البروفيسور (455 تدريب / 340 تحقق). غطاء الأرض هو المستوى الموثوق؛ والمحاصيل تعرض دقتها الموسمية المقاسة فعلًا — التداخل الطيفي بين المحاصيل كبير، فاقرأ لوحة الدقة دائمًا.",
         generalHint: "مياه · عمران · أرض بور · أراضٍ زراعية — المستوى صاحب أقوى دقة مقاسة (~85%).",
         cropsHint: "فئات المحاصيل الإحدى عشرة من طقم العينات، مُرشَّحة موسميًا بصرامة."
       },
@@ -743,17 +746,18 @@
       },
       samples: {
         title: "عينات التدريب",
-        hint: "المدمج: 360 نقطة مرجعية موثّقة (منطقة برج العرب) تدرّب كل عملية تشغيل. أضف نقاطك — 20 نقطة على الأقل على فئتين — لتتدرب عليها بدلًا منها.",
+        hint: "المدمج: أطقم البروفيسور المخصصة (455 تدريب / 340 تحقق، منطقة برج العرب) تدرّب كل عملية تشغيل. أضف نقاطك — 20 نقطة على الأقل على فئتين — لتتدرب عليها بدلًا منها.",
         class: "الفئة",
         pick: "اختر نقاطًا", stop: "إيقاف الاختيار", pickHint: "انقر على الخريطة لإضافة نقاط من فئة: {class}",
         upload: "رفع CSV", clear: "مسح",
-        none: "لا نقاط يدوية — سيُدرَّب التشغيل على الطقم المرجعي المدمج (360 نقطة).",
+        none: "لا نقاط يدوية — سيُدرَّب التشغيل على أطقم البروفيسور المخصصة (455 تدريب / 340 تحقق).",
         few: "{n} نقطة على {k} فئات — يلزم 20 نقطة على فئتين قبل أن تحل محل الطقم المدمج.",
         ok: "{n} نقطة على {k} فئات — نقاطك تحل محل الطقم المدمج.",
         unused: "هذه الخوارزمية تدرب نفسها: لا تُستخدم عينات.",
         loaded: "تم تحميل {n} عينة.", skipped: " تم تجاهل {n} صفوفًا.", inactive: "خارج الموسم",
         csvHint: "CSV مفصول بفاصلة أو بفاصلة منقوطة؛ الأعمدة lon/lat/class أو POINT_X/POINT_Y/ClassName — والفئة قد تكون الرمز (WHT) أو الرقم (1) أو الاسم (قمح).",
-        groundTruth: "نقاط الحقيقة الأرضية", gtHint: "اعرض 360 نقطة مرجعية مدمجة على الخريطة، ملوّنة حسب الفئة."
+        groundTruth: "نقاط الحقيقة الأرضية", gtHint: "اعرض 795 نقطة مرجعية مدمجة على الخريطة، ملوّنة حسب الفئة (ممتلئة = تدريب، مفرّغة = تحقق محجوز).",
+        roleTrain: "نقطة تدريب", roleValidation: "نقطة تحقق"
       },
       run: "شغّل التصنيف", running: "جارٍ التشغيل…",
       historyBtn: "السجل", compareBtn: "قارن الخوارزميات", leagueBtn: "دوري الدقة",
@@ -796,12 +800,14 @@
         geojsonOk: "تم تنزيل GeoJSON: {n} عنصرًا بمساحة {area} فدان", geojsonEmpty: "ارسم أو حمّل منطقة دراسة أولًا.",
         stageFetch: "جاري جلب صور Sentinel-2…", stageTrain: "جاري تدريب النموذج…", stageRender: "جاري إنتاج الخريطة…",
         fromCache: "معروض من الذاكرة المؤقتة", rerun: "إعادة تشغيل جديدة",
-        confusionCaption: "تحقق على مستوى البكسل: {pixels} بكسل مأخوذة من {points} نقطة اختبار محجوزة (تقسيم 70/30 بالنقطة).",
+        confusionCaption: "تحقق على مستوى البكسل: {pixels} بكسل مأخوذة من {points} نقطة تحقق محجوزة ({split}).",
         confusionNoPoints: "تحقق على مستوى البكسل: {pixels} بكسل تحقق.",
         signatureTitle: "بصمات المرجع — {season}",
         signatureText: "متوسط NDVI والمدى 10–90% لكل فئة، مقاسة عند نقاط المرجع المدمجة.",
         insight: "الدقة المقاسة منخفضة عند هذا المستوى: تتداخل المحاصيل بقوة في إشارة Sentinel-2. انتقل لمستوى غطاء الأرض لخريطة موثوقة، أو أضف عينات خاصة بالمحاصيل.",
-        trainingSet: "{source} ({n} نقطة · {k} فئات) · تقسيم {split}"
+        trainingSet: "{source} — {train} تدريب · {val} تحقق ({split}) · {k} فئات",
+        trainingSplitBuiltin: "أُزيلت 20 نقطة متطابقة", trainingSplitManual: "70/30 بالنقطة",
+        confusionSplitBuiltin: "تقسيم البروفيسور المخصص تدريب/تحقق"
       },
       history: {
         title: "سجل التشغيل", close: "إغلاق", text: "كل عملية تشغيل مكتملة لهذا الحساب، الأحدث أولًا.",
@@ -830,7 +836,7 @@
       samples_far: "منطقة الدراسة بعيدة عن طقم العينات المدمج — تعامل مع النتيجة بحذر.",
       season_detected: "المدى المخصص يغطي الموسمين: استُخدم السائد، فتبقى الشتوية والصيفية مفصولتين.",
       weak_accuracy: "الدقة المقاسة منخفضة عند هذا المستوى: تتداخل المحاصيل بقوة في إشارة Sentinel-2.",
-      builtin_training: "دُرِّب على الطقم المرجعي المدمج",
+      builtin_training: "دُرِّب على أطقم البروفيسور المخصصة",
       manual_training: "دُرِّب على نقاطك المرفوعة"
     },
     },
@@ -864,11 +870,11 @@
 
     algo: {
       title: "الخوارزميات",
-      subtitle: "إحدى عشرة طريقة لتحويل حزمة صفات واحدة إلى خريطة — كلها تُدرَّب على 360 نقطة موثّقة وتُقاس على نفس الـ30% المحتجزة.",
+      subtitle: "إحدى عشرة طريقة لتحويل حزمة صفات واحدة إلى خريطة — كلها تُدرَّب على نقاط البروفيسور الـ455 وتُقاس على نقاط التحقق الـ340 المحجوزة.",
       cta: "افتح مساحة العمل",
       group: { supervised: "موجهة", unsupervised: "غير موجّهة", knowledge: "معرفية" },
       groupText: {
-        supervised: "يُضبَّط نموذج على نقاط المرجع المعنونة ثم يُطبَّق على كل بكسل. وتُقاس الدقة على الـ30% المحتجزة من النقاط.",
+        supervised: "يُضبَّط نموذج على نقاط التدريب الـ455 ثم يُطبَّق على كل بكسل. وتُقاس الدقة على نقاط التحقق الـ340 المحجوزة.",
         unsupervised: "تُجمَّع البكسلات بالتشابه الطيفي وحده — بلا فئات وبلا دقة: خريطة بنية.",
         knowledge: "بلا تدريب إطلاقًا: تُطابَق البكسلات مع إحصاءات الفئات المقاسة عند نقاط المرجع."
       },
@@ -886,11 +892,11 @@
         gtb: "أشجار ضحلة معزّقة تُبنى تباعًا، كل واحدة تصحح أخطاء سابقتها. غالبًا أقرب منافس للغابة العشوائية على الأطقم الصغيرة.",
         nb: "بايز السذج الغاوسي: يفترض لكل فئة ونطاق توزيعًا طبيعيًا مستقلًا — سريع وبسيط، وخط أساس مفيد لما تستطيع النطاقات وحدها تفسيره.",
         mlp: "شبكة عصبية بطبقة خفية واحدة تُدرَّب على الخادم ثم تُعاد حسبة كل بكسل داخل Earth Engine كجبر نطاقات — نفس الشبكة ونفس النتيجة على مقياس كوكبي.",
-        knn: "تُسمّى البكسلة بفئة أغلبية جيرانها التدريبيين الأقرب في فضاء الصفات. مع 360 نقطة مرجعية يتصرف كذاكرة محلية للحقول.",
+        knn: "تُسمّى البكسلة بفئة أغلبية جيرانها التدريبيين الأقرب في فضاء الصفات. مع 455 نقطة تدريب يتصرف كذاكرة محلية للحقول.",
         mindist_e: "ينضم كل بكسل للفئة الأقرب متوسطًا بمسافة إقليدية — مصنّف أقرب المتوسطات الكلاسيكي، شفاف وسريع.",
         mindist_m: "نفس فكرة أقرب المتوسطات، لكن المسافات تُوزن بتغاير بيانات التدريب فيتوقف هيمنة النطاقات المترابطة. يعمل على نطاقات الخلاصة التسعة المُفككة.",
         kmeans: "تُجمَّع البكسلات في k مجموعات طيفية بلا فئات إطلاقًا — الخريطة التي تريدها حين تحتاج بنية لا أسماء.",
-        signature: "بلا تدريب: تُقيَّم كل بكسلة مقابل متوسطات وانحرافات الفئات المقاسة عند 360 نقطة مرجعية بمسافة غاوسية ساذجة. تقدير فوري، موسوم بذلك بوضوح."
+        signature: "بلا تدريب: تُقيَّم كل بكسلة مقابل متوسطات وانحرافات الفئات المقاسة عند نقاط المرجع المدمجة بمسافة غاوسية ساذجة. تقدير فوري، موسوم بذلك بوضوح."
       },
       protocol: {
         title: "خط الأنابيب خلف كل تشغيلة",
@@ -898,8 +904,8 @@
           { title: "حزمة صفات لكل بكسل", text: "لكل بكسل يركّب المحرك وسائط شهرية لـNDVI وNDWI وNDMI للفترة، وإحصاءات NDVI (p10 والوسيط وp90 والمتوسط والانحراف)، ووسائط B4/B8/B11/B12 — من 21 إلى 45 نطاقًا حسب النافذة." },
           { title: "قناع السحب", text: "تُستبعد بكسلات تصنيف المشهد في Sentinel-2 L2A الموسومة كسحب أو ظل أو سحك قبل أي تجميع؛ وسقف نسبة الغيوم بيدك." },
           { title: "الترشيح الموسمي للفئات", text: "عائلة موسم الفترة تقرر قائمة الفئات: نوافذ الشتاء تُبقي 9 فئات شتوية، ونوافذ الصيف 8 صيفية — لا تدخل محصول خارج موسمه نموذجًا أبدًا." },
-          { title: "التدريب على نقاط المرجع", text: "تُؤخذ الصفات عند 360 نقطة معنونة (منطقة الدراسة مع منطقة العينات)، نحو 7 بكسلات لكل نقطة، وتُقسم 70/30 لكل فئة مع بقاء كل بكسلات النقطة في الجهة نفسها." },
-          { title: "دقة مقاسة", text: "تُحسب OA وKappa وPA/UA/F1 لكل فئة على الـ30% المحتجزة وحدها — الأرقام على الشاشة قياسات لا توقعات." }
+          { title: "التدريب على نقاط المرجع", text: "تُؤخذ الصفات عند النقاط المعنونة (منطقة الدراسة مع منطقة العينات)، نحو 7 بكسلات لكل نقطة، وتحدد أطقم البروفيسور الجهة: بكسلات نقطة التدريب للتدريب وبكسلات نقطة التحقق للاختبار، مع بقاء كل بكسلات النقطة في الجهة نفسها." },
+          { title: "دقة مقاسة", text: "تُحسب OA وKappa وPA/UA/F1 لكل فئة على نقاط التحقق المحجوزة وحدها — الأرقام على الشاشة قياسات لا توقعات." }
         ]
       }
     },
@@ -924,10 +930,10 @@
         { title: "صدّر", text: "جدول الفئات CSV، والنطاق المصنّف GeoTIFF، والتقرير كاملًا عبر عرض الطباعة." }
       ],
       faq: [
-        { q: "من أين تأتي نقاط التدريب؟", a: "طقم مرجعي موثّق من 360 نقطة معنونة في منطقة برج العرب، مدمج في المحرك. ارفع CSV خاصًا بك (20 نقطة على فئتين فأكثر) لتتدرب على بياناتك بدلًا منها." },
+        { q: "من أين تأتي نقاط التدريب؟", a: "أطقم البروفيسور المخصصة: 455 نقطة تدريب و340 نقطة تحقق منفصلة تمامًا في منطقة برج العرب، مدمجة في المحرك. ارفع CSV خاصًا بك (20 نقطة على فئتين فأكثر) لتتدرب على بياناتك بدلًا منها." },
         { q: "لماذا مستويان للتصنيف؟", a: "يفصل طقم المرجع المياه والعمران والأرض البور والأراضي الزراعية بموثوقية (~85% مقاسة)، بينما تتداخل المحاصيل بقوة في إشارة Sentinel-2. المستوى الأول يمنحك الخريطة الموثوقة، والثاني يمنح التفصيل الموسمي بدقته الصادقة." },
-        { q: "لماذا تختفي بعض الفئات في بعض الفترات؟", a: "لا تجتمع شتوية وصيفية في نموذج واحد: نوافذ الشتاء تستبعد الذرة والعنب (يبقى 294 نقطة)، ونوافذ الصيف تستبعد القمح والبنجر والبطاطس (يبقى 252 نقطة). ويعرض شريط في مساحة العمل الفئات النشطة والمستبعدة دومًا." },
-        { q: "كيف تُقاس الدقة؟", a: "تُقسم نقاط المرجع 70/30 لكل فئة، بتجميع يُبقي بكسلات النقطة الواحدة في الجهة نفسها. وكل رقم دقة في التطبيق يأتي من الـ30% المحتجزة وحدها." },
+        { q: "لماذا تختفي بعض الفئات في بعض الفترات؟", a: "لا تجتمع شتوية وصيفية في نموذج واحد: نوافذ الشتاء تستبعد الذرة والعنب (يبقى 370 تدريب / 279 تحقق)، ونوافذ الصيف تستبعد القمح والبنجر والبطاطس (يبقى 315 تدريب / 247 تحقق). ويعرض شريط في مساحة العمل الفئات النشطة والمستبعدة دومًا." },
+        { q: "كيف تُقاس الدقة؟", a: "تحدد أطقم البروفيسور المخصصة الجهة: 455 نقطة تدريب للتدريب و340 نقطة تحقق منفصلة للاختبار، بتجميع يُبقي بكسلات النقطة الواحدة في الجهة نفسها. وكل رقم دقة في التطبيق يأتي من نقاط التحقق المحجوزة وحدها." },
         { q: "أي خوارزمية أستخدم؟", a: "الغابة العشوائية أأمن اختيار افتراضي. ودوري الدقة يدرّب الخوارزميات الموجهة التسع على نفس التقسيم ويرتبها — جرّبه قبل كتابة التقرير." },
         { q: "ما المسح الفوري؟", a: "تقدير بلا تدريب: تُقيَّم كل بكسلة مقابل إحصاءات الفئات المقاسة عند نقاط المرجع. فوري، وموسوم بوضوح بأنه تقدير، ومفيد كنظرة أولى." },
         { q: "هل أرقام الإنتاجية والمياه قياسات؟", a: "لا — أرقام تخطيطية استرشادية مصرية للفدان، موسومة بذلك في كل موضع تظهر فيه." }
@@ -944,12 +950,12 @@
       title: "دلتا فيجن — تقرير التصنيف",
       studyArea: "منطقة الدراسة", period: "الفترة", algorithm: "الخوارزمية", level: "المستوى",
       params: "المعاملات", generated: "تاريخ الإنشاء",
-      disclaimer: "المساحات جيوديسية (WGS84). الدقة مقاسة على الـ30% المحتجزة من نقاط المرجع. وأرقام الإنتاجية والمياه قيم تخطيطية استرشادية لا قياسات."
+      disclaimer: "المساحات جيوديسية (WGS84). الدقة مقاسة على نقاط التحقق الـ340 المحجوزة. وأرقام الإنتاجية والمياه قيم تخطيطية استرشادية لا قياسات."
     },
 
     footer: {
       links: "دلتا فيجن", credits: "الفضل",
-      about: "يحوّل دلتا فيجن صور Sentinel-2 إلى خرائط غطاء أرض ومحاصيل لدلتا النيل على مستويين، مدرّبة على 360 نقطة حقلية موثّقة ومقدَّمة بالفدان.",
+      about: "يحوّل دلتا فيجن صور Sentinel-2 إلى خرائط غطاء أرض ومحاصيل لدلتا النيل على مستويين، مدرّبة على نقاط البروفيسور الـ455 ومتحقَّقة على 340 نقطة منفصلة، ومقدَّمة بالفدان.",
       data: "الصور: كوبرنيكوس Sentinel-2 (ESA) معالَجة على Google Earth Engine.",
       software: "مبني كتطبيق صفحة واحدة عربي أولًا مع خلفية Earth Engine بلا خادم.",
       build: "نظام الفئات وإحصاءات المرج وهذا الموقع كلها من ملف البيانات نفسه.",

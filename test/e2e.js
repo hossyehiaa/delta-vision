@@ -126,7 +126,7 @@ function ok(cond, name, extra) {
   ok(await page.locator("#donut svg").count() === 1, "donut rendered");
   ok(await page.locator("#signature-chart svg").count() === 1, "signature chart rendered");
   const badgeTxt = await page.locator("#sb-active").textContent();
-  ok(/4/.test(badgeTxt) && /360/.test(badgeTxt), "seasonal badge: 4 classes / 360 points", badgeTxt);
+  ok(/4/.test(badgeTxt) && /795/.test(badgeTxt), "seasonal badge: 4 classes / 795 points (455 train + 340 validation)", badgeTxt);
   await shot("05-workspace-results-ar");
 
   // Level 2 — crop type: strict seasonal filtering
