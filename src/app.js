@@ -454,7 +454,7 @@
 
   // ---------------------------------------------------------------- the map
   var map = null, aoiLayer = null, samplesLayer = null, overlayLayer = null, drawLayer = null, sceneLayer = null, sceneActive = null;
-  var overlayPreviewLayer = null, bakedOverlay = null, bakedCanvas = null, bakedUrl = null, bakePromise = null;
+  var overlayPreviewLayer = null, bakedOverlay = null, bakedCanvas = null, bakedUrl = null, bakePromise = null, bakeSettled = true;
   var gtLayer = null, basemaps = null, activeBasemap = "satellite", hybridLabels = null, abOn = false;
   /* Earth Engine dynamic-map overlays: a zoom-in can ask Earth Engine for
    * dozens of cold dynamic tiles at once, and the engine throttles/drops
@@ -1793,7 +1793,7 @@
     if (overlayLayer) { map.removeLayer(overlayLayer); overlayLayer = null; }
     if (overlayPreviewLayer) { map.removeLayer(overlayPreviewLayer); overlayPreviewLayer = null; }
     if (bakedOverlay) { map.removeLayer(bakedOverlay); bakedOverlay = null; }
-    bakedCanvas = null; bakePromise = null;   // a new run bakes a new raster
+    bakedCanvas = null; bakePromise = null; bakeSettled = true;   // a new run bakes a new raster
     if (!state.results) return;
     if (state.results.tileUrl) {
       // live Earth Engine run: an instant z11 preview (a handful of tiles)
@@ -1827,9 +1827,14 @@
    *  purely local: Leaflet scales the baked image, so no Earth Engine
    *  request is issued on zoom and no blank hole can ever appear. The
    *  clipped canvas is also the export raster, which makes the PNG export
-   *  instant. On failure the z11 preview layer simply stays on screen. */
+   *  instant. Completion is measured by scanning the grid, and the stitch
+   *  refuses to run unless 100 % of the tiles are present — the promise
+   *  resolves only with a fully verified raster, so the export and the
+   *  print report can never composite a partial grid. On failure the z11
+   *  preview layer simply stays on screen. */
   function bakeOverlay(r) {
     if (bakePromise) return bakePromise;
+    bakeSettled = false;   // export buttons show "Preparing full map…" until the bake settles
     bakePromise = new Promise(function (resolve, reject) {
       var b = G.collectionBbox(state.aoi.fc);
       var z = 12, grid = tileGridFor(b, z);
@@ -1837,35 +1842,58 @@
       while (grid.nx * grid.ny < 4 && z < 12) { z++; grid = tileGridFor(b, z); }   // tiny AOIs keep some detail
       var total = grid.nx * grid.ny;
       var tiles = new Array(total);
-      var idx = 0, inFlight = 0, failed = false, doneCount = 0;
+      var launched = new Array(total);   // true while a fetch for that tile is in flight
+      var idx = 0, inFlight = 0, failed = false;
       var bakeAttempt = 0;      // whole-bake re-attempts across throttle windows
+      var cooldownPending = false;   // one cooldown scheduled per throttle window
       var COOLDOWNS = [10000, 25000];   // s to wait before re-attempting the bake
+      // completion is MEASURED by scanning the grid, never counted
+      // incrementally: a cooldown re-attempt restarts the scan at tile 0,
+      // and an incremental counter re-counts every already-loaded tile it
+      // walks past, crosses "total" while tiles are still missing and
+      // stitches a grid with holes — exactly how the southern tail of the
+      // AOI was once exported as transparent rectangles
+      var allLoaded = function () {
+        for (var i = 0; i < total; i++) if (!tiles[i]) return false;
+        return true;
+      };
       var next = function () {
         while (idx < total && inFlight < 3 && !failed) {
           (function (i) {
-            if (tiles[i]) { doneCount++; if (doneCount === total) stitch(); return; }
-            inFlight++;
+            // rescan (after a cooldown): skip what is loaded or already in
+            // flight — a duplicate fetch of an in-flight tile is a wasted
+            // Earth Engine request
+            if (tiles[i] || launched[i]) { if (allLoaded()) stitch(); return; }
+            launched[i] = true; inFlight++;
             var url = r.tileUrl.replace("{z}", z).replace("{x}", String(grid.x0 + (i % grid.nx))).replace("{y}", String(grid.y0 + Math.floor(i / grid.nx)));
             loadTile(url, 5).then(function (img) {
-              tiles[i] = img; inFlight--; doneCount++;
+              launched[i] = false; tiles[i] = img; inFlight--;
               if (failed) return;
-              // NOTE: a plain count, never tiles.every(Boolean) — every()
+              // NOTE: a measured scan, never tiles.every(Boolean) — every()
               // skips the holes of new Array(n) and is vacuously true after
               // the very first tile, which would stitch an empty grid
-              if (doneCount === total) stitch(); else next();
+              if (allLoaded()) stitch(); else next();
             }, function () {
-              inFlight--;
+              launched[i] = false; inFlight--;
               if (failed) return;
               // a tile exhausted its five retries: Earth Engine is
               // throttling the whole burst. Cool down and re-attempt the
               // bake — already-loaded tiles are kept, only the missing
-              // ones are fetched again
+              // ones are fetched again. The cooldown is per WINDOW, not
+              // per exhausted tile: every tile that gives up while a
+              // cooldown is already scheduled waits for that same
+              // re-attempt (per-tile consumption rejected bakes that a
+              // single shared retry would have recovered)
               if (bakeAttempt < COOLDOWNS.length) {
-                var wait = COOLDOWNS[bakeAttempt++];
-                idx = 0; failed = false;
-                setTimeout(next, wait);
-              } else {
+                if (!cooldownPending) {
+                  cooldownPending = true;
+                  idx = 0;   // the re-attempt rescans the grid from tile 0
+                  var wait = COOLDOWNS[bakeAttempt++];
+                  setTimeout(function () { cooldownPending = false; next(); }, wait);
+                }
+              } else if (!cooldownPending) {
                 failed = true;                    // 100 % of tiles or no bake
+                bakeSettled = true;
                 reject({ code: "bake_failed" });
               }
             });
@@ -1876,6 +1904,13 @@
       // first, so the two never stampede Earth Engine together
       setTimeout(next, 1200);
       var stitch = function () {
+        // hard gate before compositing: 100 % of the AOI-intersecting tiles
+        // must actually be present. PNG export and the print report await
+        // this very promise, so it must never resolve with a partial grid —
+        // refuse instead of stitching blank rectangles over the map
+        var missing = 0;
+        for (var i = 0; i < total; i++) if (!tiles[i]) missing++;
+        if (missing) { bakeSettled = true; reject({ code: "bake_incomplete", missing: missing, total: total }); return; }
         var W = grid.nx * 256, H = grid.ny * 256;
         var cv = document.createElement("canvas");
         cv.width = W; cv.height = H;
@@ -1893,7 +1928,7 @@
         out.getContext("2d").drawImage(cv, fx, fy, fw, fh, 0, 0, cw, ch);
         bakedCanvas = out;                       // the export raster
         out.toBlob(function (blob) {
-          if (!blob) { reject({ code: "bake_blob" }); return; }
+          if (!blob) { bakeSettled = true; reject({ code: "bake_blob" }); return; }
           if (bakedUrl) { try { URL.revokeObjectURL(bakedUrl); } catch (e) { /* noop */ } }
           bakedUrl = URL.createObjectURL(blob);
           bakedOverlay = L.imageOverlay(bakedUrl, [[b[1], b[0]], [b[3], b[2]]], {
@@ -1902,10 +1937,10 @@
           if (state.layers.overlay !== false) bakedOverlay.addTo(map);
           if (overlayPreviewLayer) { map.removeLayer(overlayPreviewLayer); overlayPreviewLayer = null; overlayLayer = bakedOverlay; }
           if (abOn) setAbMode(true);
+          bakeSettled = true;
           resolve(out);
         }, "image/png");
       };
-      next();
     });
     return bakePromise;
   }
@@ -2467,12 +2502,40 @@
     var y = (1 - Math.log(Math.tan(latR) + 1 / Math.cos(latR)) / Math.PI) / 2 * n;
     return [x, y];   // fractional tile coords
   }
+  /** the Export-PNG / Print-Report buttons while the full z12 bake is
+   *  awaited: label swapped to "Preparing full map…", disabled and marked
+   *  aria-busy, so the button itself tells the user the raster is still
+   *  incomplete and a second click cannot race the awaited promise. The
+   *  label is restored through the i18n key, so it survives a language
+   *  switch made while the bake was running. */
+  function exportBusy(sel, on) {
+    var el = $(sel); if (!el) return;
+    if (on) {
+      el.disabled = true; el.setAttribute("aria-busy", "true");
+      el.textContent = t("ws.results.pngPreparing");
+    } else {
+      el.disabled = false; el.removeAttribute("aria-busy");
+      var key = el.getAttribute("data-i18n");
+      if (key) { try { el.textContent = t(key); } catch (e) { /* keep the busy label */ } }
+    }
+  }
+  /** true while the baked raster is still incomplete: export and print must
+   *  await the full tile grid, never composite a partial one */
+  function bakePending() {
+    return !!(bakePromise && !bakeSettled);
+  }
   function exportPng() {
     var r = state.results;
     if (!r) { toast(t("ws.results.empty"), true); return; }
     if (!r.tileUrl && !r.previewImage) { toast(t("ws.results.pngNoTiles"), true); return; }
-    toast(t("ws.results.pngStitching"));
+    // a live export awaits the FULL bake: while the grid is still loading
+    // the button says so and blocks — the raster that lands here can only
+    // be a verified 100 %-tile composite (or an explicit error)
+    var waiting = bakePending() && !!r.tileUrl && isLive();
+    if (waiting) exportBusy("#png-btn", true);
+    toast(t(waiting ? "ws.results.pngPreparing" : "ws.results.pngStitching"));
     buildExportRaster(r).then(function (work) {
+      exportBusy("#png-btn", false);
       return (document.fonts && document.fonts.ready ? document.fonts.ready.then(function () { return work; }) : Promise.resolve(work));
     }).then(function (work) {
       var out = buildComposedCanvas(work, r);
@@ -2482,17 +2545,21 @@
         toast(t("common.download") + " · PNG " + out.width + "×" + out.height + " px");
       }, "image/png");
     }, function (err) {
+      exportBusy("#png-btn", false);
       toast(t("ws.results.pngFailed", { err: (err && err.code) || err }), true);
     });
   }
   /** the classified raster for export. Live runs reuse the exact canvas
    *  the map already displays — the baked z12 overlay (clipped to the AOI,
-   *  every tile present) upscaled to >= 2000 px with nearest-neighbour — so
-   *  the export is a local canvas composite, effectively instant and immune
-   *  to Earth Engine rate limits. If the bake is still running, its promise
-   *  is awaited; if it failed, a server-rendered thumbnail (a single
-   *  synchronous EE request) is the fallback, and the direct tile-stitch is
-   *  the last resort. Preview mode draws its own preview image. */
+   *  every tile present, verified at stitch time) upscaled to >= 2000 px
+   *  with nearest-neighbour — so the export is a local canvas composite,
+   *  effectively instant and immune to Earth Engine rate limits. If the
+   *  bake is still running, its promise is awaited here — a partial tile
+   *  grid is NEVER composited; if it failed (throttle or an incomplete
+   *  grid refused at the stitch gate), a server-rendered thumbnail (a
+   *  single synchronous EE request) is the fallback, and the direct
+   *  tile-stitch is the last resort. Preview mode draws its own preview
+   *  image. */
   function buildExportRaster(r) {
     if (!r.tileUrl || !isLive()) {
       return r.previewImage ? buildClassifiedCanvas(r) : Promise.reject({ code: "pngNoTiles" });
@@ -2691,7 +2758,8 @@
   /** the classified raster on a canvas: live runs stitch EE tiles at z14
    *  (≥2000 px on the long side for Borj-sized AOIs; small AOIs step up the
    *  zoom until the long side reaches 2000 px), preview runs draw the
-   *  preview image directly. */
+   *  preview image directly. Live stitching requires every tile: a single
+   *  missing tile fails the export instead of leaving a blank rectangle. */
   function buildClassifiedCanvas(r) {
     if (!r.tileUrl) {           // preview mode: the already-rendered dataURL
       return new Promise(function (resolve, reject) {
@@ -2732,7 +2800,10 @@
         }
       };
       var finish = function () {
-        if (failures > total * 0.25) { reject({ code: "tile_errors" }); return; }
+        // zero tolerance: an export must never composite a partial tile
+        // grid (white rectangles where tiles failed) — it either renders
+        // 100 % of the AOI-intersecting tiles or fails explicitly
+        if (failures > 0) { reject({ code: "tile_errors", missing: failures, total: total }); return; }
         var W = grid.nx * 256, H = grid.ny * 256;
         var cv = document.createElement("canvas");
         cv.width = W; cv.height = H;
@@ -2862,7 +2933,13 @@
   function printReport() {
     var r = state.results;
     if (!r) { toast(t("ws.results.empty"), true); return; }
+    // the print window opens only once the FULL bake has resolved — while
+    // the grid is still loading the button says so and blocks, so a
+    // partial raster can never reach the printed page
+    var waiting = bakePending() && !!r.tileUrl && isLive();
+    if (waiting) exportBusy("#print-btn", true);
     buildExportRaster(r).then(function (work) {
+      exportBusy("#print-btn", false);
       var isAr = state.lang === "ar";
       var png = composeExportCanvas(work, r);       // same composite as the PNG export
       var dataUrl = png.toDataURL("image/png");
@@ -2874,12 +2951,12 @@
       var cmHtml = "";
       if (r.confusion && r.confusion.classIds && r.confusion.classIds.length > 1) {
         var names = r.confusion.classIds.map(function (id) { var c = classById(id, r.scheme); return c ? esc(className(c)) : String(id); });
-        cmHtml = "<h2>" + esc(t("ws.results.confusionTitle")) + "</h2><table class='cm'>"
+        cmHtml = "<section><h2>" + esc(t("ws.results.confusionTitle")) + "</h2><table class='cm'>"
           + "<tr><th></th>" + names.map(function (n) { return "<th>" + n + "</th>"; }).join("") + "</tr>"
           + r.confusion.rows.map(function (row, i) {
             return "<tr><th>" + names[i] + "</th>" + row.map(function (v, j) { return "<td" + (i === j ? " class='d'" : "") + ">" + v + "</td>"; }).join("") + "</tr>";
           }).join("") + "</table>"
-          + "<p class='cap'>" + esc(confusionCaptionText(r)) + "</p>";
+          + "<p class='cap'>" + esc(confusionCaptionText(r)) + "</p></section>";
       }
       var acc = r.oa != null ? "<b>OA " + fmt(r.oa * 100, 1) + "%</b> · kappa " + fmt(r.kappa, 3) : "";
       var html = "<!doctype html><html lang='" + state.lang + "' dir='" + (isAr ? "rtl" : "ltr") + "'><head><meta charset='utf-8'>"
@@ -2889,14 +2966,19 @@
         + "img.map{width:100%;display:block;margin:12px 0}table{width:100%;border-collapse:collapse;font-size:12px;margin:6px 0 18px}"
         + "th,td{border:1px solid #ccc;padding:5px 8px;text-align:start}td.n,th.n{text-align:end}tr td:last-child, table.cm td{text-align:center}"
         + "table.cm th{background:#f2f2f2}table.cm td.d{background:#e5f2d8;font-weight:600}"
-        + "h2{font-size:15px;margin:18px 0 6px}p.cap{color:#555;font-size:11px}footer{padding:10px 18px;border-top:1px solid #ccc;color:#777;font-size:11px}"
+        + "h2{font-size:15px;margin:18px 0 6px;break-after:avoid;page-break-after:avoid}"
+        + "p.cap{color:#555;font-size:11px}footer{padding:10px 18px;border-top:1px solid #ccc;color:#777;font-size:11px}"
+        // the Classes section never splits: its header row travels with the
+        // body rows (a section that does not fit the remaining page space
+        // moves whole to the next page instead of orphaning its header)
+        + "section{break-inside:avoid;page-break-inside:avoid}tr{break-inside:avoid;page-break-inside:avoid}"
         + "@media print{header{padding:8px 10px}img.map{margin:6px 0}}"
         + "</style></head><body>"
         + "<header><h1>" + esc(t("ws.results.printTitle")) + "</h1><p>" + esc(levelName + " · " + t("ws.season." + (r.season || "winter")) + " · " + (r.dateFrom || "") + " → " + (r.dateTo || "")) + " · " + esc(state.aoi ? state.aoi.name : "") + " · " + acc + "</p></header>"
         + "<img class='map' src='" + dataUrl + "' alt=''>"
-        + "<h2>" + esc(t("ws.results.tableTitle")) + "</h2><table><tr><th>" + esc(t("ws.results.class")) + "</th><th class='n'>" + esc(t("units.feddan")) + "</th><th class='n'>km²</th><th class='n'>%</th>"
+        + "<section class='classes'><h2>" + esc(t("ws.results.tableTitle")) + "</h2><table><tr><th>" + esc(t("ws.results.class")) + "</th><th class='n'>" + esc(t("units.feddan")) + "</th><th class='n'>km²</th><th class='n'>%</th>"
         + (r.classes.some(function (c) { return c.pa != null; }) ? "<th class='n'>PA</th><th class='n'>UA</th><th class='n'>F1</th>" : "") + "</tr>" + rows
-        + "<tr><th>" + esc(t("ws.results.total")) + "</th><th class='n'>" + feddan(totalAreaM2(r)) + "</th><th class='n'>" + fmt(G.m2ToKm2(totalAreaM2(r))) + "</th><th class='n'>100%</th></tr></table>"
+        + "<tr><th>" + esc(t("ws.results.total")) + "</th><th class='n'>" + feddan(totalAreaM2(r)) + "</th><th class='n'>" + fmt(G.m2ToKm2(totalAreaM2(r))) + "</th><th class='n'>100%</th></tr></table></section>"
         + cmHtml
         + "<footer>" + esc(t("ws.results.printIntro")) + " · " + esc(t("report.disclaimer")) + "</footer>"
         + "</body></html>";
@@ -2908,6 +2990,7 @@
       if (w.document.readyState === "complete") fire();
       else w.onload = fire;
     }, function (err) {
+      exportBusy("#print-btn", false);
       toast(t("ws.results.pngFailed", { err: (err && err.code) || err }), true);
     });
   }

@@ -619,6 +619,12 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
   .report-head dd { margin: 0; }
   .report-head p { margin-top: 8px; font-size: 9pt; color: #555; }
   .dv-table th { position: static; }
+  /* a section heading never sits alone at a page bottom, and the class /
+   * confusion tables never split away from their header rows — an orphaned
+   * header at the foot of one page with the rows on the next is exactly
+   * what the print report must avoid */
+  .sub-title { break-after: avoid; page-break-after: avoid; }
+  #class-table, #confusion-wrap { break-inside: avoid; page-break-inside: avoid; }
   .signature svg { max-height: 150mm; }
 }
 

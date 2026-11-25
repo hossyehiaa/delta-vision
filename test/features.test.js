@@ -2,7 +2,10 @@
 /* features.test.js — this turn's additions, end to end in a mocked live
  * session: run cache + Re-run fresh, compare persistence, confusion caption,
  * GeoJSON / PNG / GeoTIFF / print exports, custom date seeding and order,
- * blank basemap, toolbar draw tools, fullscreen layout, single-source mode.
+ * blank basemap, toolbar draw tools, fullscreen layout, single-source mode,
+ * and the bake-cooldown regression: a throttled bottom tile row must never
+ * be stitched or exported as a partial grid, and the export/print buttons
+ * show their busy state until the full grid is verified.
  *   node features.test.js <built index.html> */
 "use strict";
 const { chromium } = require("playwright");
@@ -41,6 +44,7 @@ const RUN_L1 = {
   page.on("pageerror", (e) => { errors.push(String(e)); console.log("PAGEERROR:", String(e).slice(0, 250)); });
   page.on("console", (m) => {
     if (m.type() === "error" && !/net::ERR|Failed to load resource|the server responded with a status/.test(m.text())) errors.push(m.text());
+    if (/^dv:/.test(m.text())) console.log("  DVLOG:", m.text().slice(0, 200));
   });
 
   const calls = { run: 0, runBodies: [] };
@@ -71,8 +75,25 @@ const RUN_L1 = {
   });
   // the classification tiles + the GeoTIFF download
   let bakeTileHits = 0;   // the bake must fetch the FULL z12 grid (no every()-hole short-circuit)
+  const z12ys = new Set();        // distinct y rows of the Borj z12 grid (§10 throttles the bottom row)
+  let bottomY = -1, failBottomRow = false, opaqueZ12 = false;
+  const tileFails = {};           // per-URL 500s already served (the throttle budget)
+  const throttledBottom = new Set();   // first 3 distinct bottom-row URLs get the treatment
+  let OPAQUE_PNG = PNG1x1;        // an opaque 1×1 (generated in-page in §10) — completeness probing
   await page.route("**/tiles.test/**", (route) => {
-    if (/\/run\/12\//.test(route.request().url())) bakeTileHits++;
+    const u = new URL(route.request().url());
+    if (/\/run\/12\//.test(u.pathname)) {
+      bakeTileHits++;
+      const y = parseInt(u.pathname.split("/").pop(), 10);
+      z12ys.add(y);
+      if (failBottomRow && y === bottomY && (throttledBottom.size < 3 || throttledBottom.has(u.pathname))) {
+        throttledBottom.add(u.pathname);
+        tileFails[u.pathname] = (tileFails[u.pathname] || 0) + 1;
+        // 6 failures = the initial attempt + all five retries exhausted → bake cooldown
+        if (tileFails[u.pathname] <= 6) return route.fulfill({ status: 500, contentType: "text/plain", body: "throttled" });
+      }
+      if (opaqueZ12) return route.fulfill({ contentType: "image/png", body: OPAQUE_PNG });
+    }
     return route.fulfill({ contentType: "image/png", body: PNG1x1 });
   });
   await page.route("**/download.test/**", (route) => route.fulfill({ contentType: "image/tiff", body: TIFBLOB }));
@@ -234,7 +255,67 @@ const RUN_L1 = {
   await page.waitForTimeout(600);
   ok(await page.evaluate(() => !document.fullscreenElement), "exiting fullscreen restores the layout");
 
-  console.log("== 9. single-source mode: unreachable health ≠ preview");
+  console.log("== 9. bake cooldown: a partial tile grid is never stitched or exported");
+  // §7 replaced the AOI with drawn shapes (and switched the AOI panel to the
+  // draw tab) — back to the Borj sample so the bake grid is the 5×5 z12 one
+  // whose rows were collected above (the custom range of §6 makes this a
+  // fresh live run, so tileUrl is present)
+  await page.click('#aoi-tabs .tab[data-tab="upload"]');
+  await page.waitForTimeout(200);
+  await page.click("#sample-aoi-btn");
+  await page.waitForTimeout(400);
+  // let §2's bake finish mounting before the next one replaces it
+  for (let i = 0; i < 40 && (await page.locator("img.dv-baked").count()) === 0; i++) await page.waitForTimeout(500);
+  bottomY = Math.max(...z12ys);
+  // an opaque 1×1 PNG generated in-page: with it, a hole in the baked raster
+  // reads as a transparent pixel, so completeness is directly measurable
+  OPAQUE_PNG = Buffer.from(await page.evaluate(() => {
+    const c = document.createElement("canvas"); c.width = c.height = 1;
+    const x = c.getContext("2d"); x.fillStyle = "#b45309"; x.fillRect(0, 0, 1, 1);
+    return c.toDataURL("image/png").split(",")[1];
+  }), "base64");
+  failBottomRow = true; opaqueZ12 = true;
+  await page.click("#run-btn");          // fresh live run → a new bake under the throttled mock
+  await page.waitForTimeout(800);        // results render; the bake starts ~1.2 s later
+  await page.waitForTimeout(6000);       // bottom-row tiles have exhausted their retries → cooldown holds
+  // regression: the OLD double-counted counter stitched a partial grid right
+  // here, mounting transparent rectangles over the southern tail of the AOI
+  ok((await page.locator("img.dv-baked").count()) === 0, "no baked overlay is mounted while bottom-row tiles are still missing");
+  const pngBtn = page.locator("#png-btn");
+  const dlP = page.waitForEvent("download", { timeout: 40000 });
+  await page.click("#png-btn");
+  ok(await pngBtn.isDisabled(), "Export PNG blocks while the full map is still baking");
+  ok(/Preparing full map|تجهيز الخريطة الكاملة/.test(await pngBtn.textContent()), "the busy label is the 'Preparing full map…' state", await pngBtn.textContent());
+  const popP = page.waitForEvent("popup", { timeout: 40000 });
+  await page.click("#print-btn");
+  ok(await page.locator("#print-btn").isDisabled(), "Print Report blocks with the same busy state while the bake is pending");
+  // the cooldown re-attempt (10 s) refetches only the missing tiles; the
+  // awaited export resolves only after the verified 100 % grid
+  const pngDl10 = await dlP;
+  ok(/\.png$/.test(pngDl10.suggestedFilename()) && require("fs").readFileSync(await pngDl10.path()).slice(1, 4).toString() === "PNG",
+    "the awaited export produces a real PNG once the grid is complete", pngDl10.suggestedFilename());
+  ok(!(await pngBtn.isDisabled()), "the export button is restored after the bake settles");
+  const popup10 = await popP;
+  await popup10.waitForTimeout(700);
+  ok((await popup10.locator("img.map").count()) === 1, "the print window opens only after the full bake (map image present)");
+  ok((await popup10.locator("section.classes table tr").count()) >= 5 && (await popup10.locator("section.classes h2").count()) === 1,
+    "the classes table and its header travel inside one unbreakable section");
+  await popup10.close();
+  // the mounted raster is complete: every pixel of the baked overlay is opaque
+  const trans = await page.evaluate(async () => {
+    const img = document.querySelector("img.dv-baked");
+    if (!img) return -1;
+    if (!img.complete || !img.naturalWidth) await new Promise((r) => { img.onload = r; img.onerror = r; });
+    const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight;
+    const x = c.getContext("2d"); x.drawImage(img, 0, 0);
+    const d = x.getImageData(0, 0, c.width, c.height).data;
+    let t = 0; for (let i = 3; i < d.length; i += 4) if (d[i] < 255) t++;
+    return t;
+  });
+  ok(trans === 0, "the baked raster covers 100% of the AOI — no transparent tile holes", String(trans));
+  failBottomRow = false;
+
+  console.log("== 10. single-source mode: unreachable health ≠ preview");
   healthMode = "unreachable";
   await page.reload({ waitUntil: "domcontentloaded" });
   await page.waitForTimeout(3500);
