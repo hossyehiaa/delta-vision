@@ -70,7 +70,11 @@ const RUN_L1 = {
     return reply(404, { error: "NO_MOCK", path: p });
   });
   // the classification tiles + the GeoTIFF download
-  await page.route("**/tiles.test/**", (route) => route.fulfill({ contentType: "image/png", body: PNG1x1 }));
+  let bakeTileHits = 0;   // the bake must fetch the FULL z12 grid (no every()-hole short-circuit)
+  await page.route("**/tiles.test/**", (route) => {
+    if (/\/run\/12\//.test(route.request().url())) bakeTileHits++;
+    return route.fulfill({ contentType: "image/png", body: PNG1x1 });
+  });
   await page.route("**/download.test/**", (route) => route.fulfill({ contentType: "image/tiff", body: TIFBLOB }));
 
   await page.addInitScript(() => { window.DV_API_BASE = "https://mock-api.example"; });
@@ -91,6 +95,10 @@ const RUN_L1 = {
   ok(/432/.test(cap) && /108/.test(cap), "confusion caption: 432 pixels from 108 withheld points", cap);
   const tl = await page.locator("#training-set-line").textContent();
   ok((tl.match(/Trained on/g) || []).length + (tl.match(/دُرِّب/g) || []).length === 1, "training line says 'trained on' exactly once", tl);
+
+  // the bake: all 25 z12 tiles of the Borj grid must be requested
+  for (let bi = 0; bi < 30 && bakeTileHits < 25; bi++) await page.waitForTimeout(200);
+  ok(bakeTileHits === 25, "bake fetched the full z12 grid (25 tiles, not a short-circuit)", String(bakeTileHits));
 
   console.log("== 2. client run cache + Re-run fresh");
   const t0 = Date.now();

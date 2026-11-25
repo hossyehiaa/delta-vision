@@ -6256,16 +6256,19 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
       while (grid.nx * grid.ny < 4 && z < 12) { z++; grid = tileGridFor(b, z); }   // tiny AOIs keep some detail
       var total = grid.nx * grid.ny;
       var tiles = new Array(total);
-      var idx = 0, inFlight = 0, failed = false;
+      var idx = 0, inFlight = 0, failed = false, doneCount = 0;
       var next = function () {
         while (idx < total && inFlight < 3 && !failed) {
           (function (i) {
             inFlight++;
             var url = r.tileUrl.replace("{z}", z).replace("{x}", String(grid.x0 + (i % grid.nx))).replace("{y}", String(grid.y0 + Math.floor(i / grid.nx)));
             loadTile(url, 5).then(function (img) {
-              tiles[i] = img; inFlight--;
+              tiles[i] = img; inFlight--; doneCount++;
               if (failed) return;
-              if (tiles.every(Boolean)) stitch(); else next();
+              // NOTE: a plain count, never tiles.every(Boolean) — every()
+              // skips the holes of new Array(n) and is vacuously true after
+              // the very first tile, which would stitch an empty grid
+              if (doneCount === total) stitch(); else next();
             }, function () {
               inFlight--;
               if (failed) return;
