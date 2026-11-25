@@ -6270,9 +6270,12 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
       var total = grid.nx * grid.ny;
       var tiles = new Array(total);
       var idx = 0, inFlight = 0, failed = false, doneCount = 0;
+      var bakeAttempt = 0;      // whole-bake re-attempts across throttle windows
+      var COOLDOWNS = [10000, 25000];   // s to wait before re-attempting the bake
       var next = function () {
         while (idx < total && inFlight < 3 && !failed) {
           (function (i) {
+            if (tiles[i]) { doneCount++; if (doneCount === total) stitch(); return; }
             inFlight++;
             var url = r.tileUrl.replace("{z}", z).replace("{x}", String(grid.x0 + (i % grid.nx))).replace("{y}", String(grid.y0 + Math.floor(i / grid.nx)));
             loadTile(url, 5).then(function (img) {
@@ -6285,12 +6288,25 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
             }, function () {
               inFlight--;
               if (failed) return;
-              failed = true;                      // 100 % of tiles or no bake
-              reject({ code: "bake_failed" });
+              // a tile exhausted its five retries: Earth Engine is
+              // throttling the whole burst. Cool down and re-attempt the
+              // bake — already-loaded tiles are kept, only the missing
+              // ones are fetched again
+              if (bakeAttempt < COOLDOWNS.length) {
+                var wait = COOLDOWNS[bakeAttempt++];
+                idx = 0; failed = false;
+                setTimeout(next, wait);
+              } else {
+                failed = true;                    // 100 % of tiles or no bake
+                reject({ code: "bake_failed" });
+              }
             });
           })(idx++);
         }
       };
+      // start after a short delay: the z11 preview's own tile burst goes
+      // first, so the two never stampede Earth Engine together
+      setTimeout(next, 1200);
       var stitch = function () {
         var W = grid.nx * 256, H = grid.ny * 256;
         var cv = document.createElement("canvas");
