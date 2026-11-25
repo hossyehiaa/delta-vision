@@ -22,10 +22,10 @@ const RUN_L1 = {
   tileUrl: "https://tiles.test/run/{z}/{x}/{y}",
   oa: 0.846, kappa: 0.665, activeClassIds: [1, 2, 3, 4], excludedClassIds: [],
   classes: [
-    { classId: 4, code: "CRO", en: "Cropland", ar: "أراضٍ زراعية", color: "#55b35a", areaKm2: 366.1, percent: 61.4, pa: 0.94, ua: 0.907, f1: 0.907, support: 270 },
-    { classId: 2, code: "URB", en: "Urban", ar: "عمران", color: "#d9483b", areaKm2: 104.8, percent: 17.6, pa: 0.725, ua: 0.673, f1: 0.673, support: 108 },
-    { classId: 3, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#c2a37a", areaKm2: 78.1, percent: 13.1, pa: 0.433, ua: 0.538, f1: 0.538, support: 108 },
-    { classId: 1, code: "WTR", en: "Water", ar: "مياه", color: "#2f80ed", areaKm2: 47.0, percent: 7.9, pa: 0.89, ua: 0.92, f1: 0.9, support: 108 },
+    { classId: 4, code: "CRO", en: "Cropland", ar: "أراضٍ زراعية", color: "#22C55E", areaKm2: 366.1, percent: 61.4, pa: 0.94, ua: 0.907, f1: 0.907, support: 270 },
+    { classId: 2, code: "URB", en: "Urban", ar: "عمران", color: "#EF4444", areaKm2: 104.8, percent: 17.6, pa: 0.725, ua: 0.673, f1: 0.673, support: 108 },
+    { classId: 3, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#9CA3AF", areaKm2: 78.1, percent: 13.1, pa: 0.433, ua: 0.538, f1: 0.538, support: 108 },
+    { classId: 1, code: "WTR", en: "Water", ar: "مياه", color: "#2563EB", areaKm2: 47.0, percent: 7.9, pa: 0.89, ua: 0.92, f1: 0.9, support: 108 },
   ],
   confusion: { classIds: [1, 2, 3, 4], rows: [[96, 2, 4, 6], [3, 78, 27, 0], [1, 12, 47, 48], [2, 0, 3, 103]], total: 432, nValPoints: 108 },
   nImages: 41, nTrain: 2098, nVal: 910, nValPoints: 108, durationMs: 8000,
@@ -95,6 +95,26 @@ const RUN_L1 = {
   ok(/432/.test(cap) && /108/.test(cap), "confusion caption: 432 pixels from 108 withheld points", cap);
   const tl = await page.locator("#training-set-line").textContent();
   ok((tl.match(/Trained on/g) || []).length + (tl.match(/دُرِّب/g) || []).length === 1, "training line says 'trained on' exactly once", tl);
+
+  console.log("== 1b. reference palette, single provenance, preset date sync");
+  // the professor's reference palette on the L1 class swatches
+  const sw = await page.evaluate(() => Array.from(document.querySelectorAll("#class-table .swatch")).map((el) => getComputedStyle(el).backgroundColor));
+  ok(sw.length === 4 && sw.indexOf("rgb(34, 197, 94)") >= 0 && sw.indexOf("rgb(156, 163, 175)") >= 0 && sw.indexOf("rgb(239, 68, 68)") >= 0 && sw.indexOf("rgb(37, 99, 235)") >= 0,
+    "L1 swatches = reference palette (CRO #22C55E, BAR #9CA3AF, URB #EF4444, WTR #2563EB)", JSON.stringify(sw));
+  // exactly ONE provenance under Results: the training-set line, no note twin
+  const notesTxt = (await page.locator("#run-notes").count()) ? await page.locator("#run-notes").textContent() : "";
+  ok(!/built-in reference set|الطقم المرجعي المدمج|\(360 نقطة\)/.test(notesTxt), "no duplicate provenance note stacked under Results", (notesTxt || "").slice(0, 60));
+  ok(/\(360 points · 4 classes\)|\(360 نقطة · 4 فئات\)/.test(tl), "training line carries the counts exactly once", tl.slice(0, 80));
+  // sub-season preset → From/To fields carry the preset's exact range
+  const yr = parseInt(await page.inputValue("#year-select"), 10);
+  await page.click('[data-season="early_winter"]');
+  await page.waitForTimeout(250);
+  const ef = await page.inputValue("#custom-from"), et = await page.inputValue("#custom-to");
+  ok(ef === (yr - 1) + "-10-01" && et === yr + "-01-31", "Early Winter click syncs From/To (" + (yr - 1) + "-10-01 → " + yr + "-01-31)", ef + " → " + et);
+  await page.click('[data-season="winter"]');
+  await page.waitForTimeout(250);
+  const wf = await page.inputValue("#custom-from"), wt = await page.inputValue("#custom-to");
+  ok(wf === (yr - 1) + "-11-01" && wt === yr + "-04-30", "back on Winter: From/To follow the preset again", wf + " → " + wt);
 
   // the bake: all 25 z12 tiles of the Borj grid must be requested
   for (let bi = 0; bi < 30 && bakeTileHits < 25; bi++) await page.waitForTimeout(200);

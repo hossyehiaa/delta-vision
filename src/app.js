@@ -1182,6 +1182,18 @@
     $("#season-period").textContent = state.season === "custom"
       ? t("ws.season.period", { from: per.dateFrom || "—", to: per.dateTo || "—" })
       : t("ws.season.period", { from: per.dateFrom, to: per.dateTo });
+    // a preset click (or a year change) immediately carries the preset's
+    // exact dates into the From/To fields, so they never lag one preset
+    // behind the season shown on screen
+    if (state.season !== "custom") {
+      var cfq = $("#custom-from"), ctq = $("#custom-to");
+      if (cfq && ctq) {
+        state.customFrom = per.dateFrom;
+        state.customTo = per.dateTo;
+        cfq.value = per.dateFrom || "";
+        ctq.value = per.dateTo || "";
+      }
+    }
     var family = currentFamily();
     var act = currentActiveClasses();
     var names = act.map(function (c) { return className(c); });
@@ -1606,8 +1618,8 @@
     var noteCodes = (jr.notes && jr.notes.length ? jr.notes.slice() : (jr.noteCode ? [jr.noteCode] : [])).slice();
     // honest insight: weak measured accuracy at the crop level
     if (typeof jr.oa === "number" && scheme === "crops" && jr.oa < 0.55 && noteCodes.indexOf("weak_accuracy") < 0) noteCodes.push("weak_accuracy");
-    if (jr.sampleSource === "builtin" && noteCodes.indexOf("builtin_training") < 0) noteCodes.push("builtin_training");
-    if (jr.sampleSource === "manual" && noteCodes.indexOf("manual_training") < 0) noteCodes.push("manual_training");
+    // NOTE: no builtin_/manual_training notes — the dedicated training-set
+    // line under Results is the single provenance (it used to render twice)
     return {
       mode: "live",
       algorithm: algo, algorithmName: t("algo.names." + algo),
@@ -1658,6 +1670,7 @@
   var runCache = new Map();       // key → normalized result
   var runCacheKey = function (input) {
     var parts = [
+      "v" + (D.SCHEME_VERSION || 4),   // palette / active-set revision: old cached runs miss once
       input.scheme, input.algorithm, input.season,
       input.season === "custom" ? (input.dateFrom + ".." + input.dateTo) : String(input.year || ""),
       JSON.stringify(input.params || {}),
@@ -2261,7 +2274,7 @@
       run.parentNode.insertBefore(insight, run.nextSibling);
     }
     if (run && r.noteCodes && r.noteCodes.length) {
-      var texts = r.noteCodes.filter(function (code) { return code !== "weak_accuracy"; }).map(function (code) { return t("ws.notes." + code); })
+      var texts = r.noteCodes.filter(function (code) { return code !== "weak_accuracy" && code !== "builtin_training" && code !== "manual_training"; }).map(function (code) { return t("ws.notes." + code); })
         .filter(function (s) { return s && s.indexOf("ws.notes.") !== 0; });
       if (texts.length) {
         var p = el("p", "hint", texts.join(" · "));
@@ -2561,9 +2574,41 @@
     var capSize = Math.max(14, Math.round(W * 0.016));
     var legSize = Math.max(15, Math.round(W * 0.018));
     var bands = Math.round(titleSize * 1.8) + pad;
-    var legendRows = Math.ceil(r.classes.length / 4);
-    var legendH = legendRows * Math.round(legSize * 2.1) + Math.round(pad * 0.7);
     var capH = Math.round(capSize * 2.4);
+    // active seasonal legend entries: EVERY active class of the run — the
+    // class rows can miss a zero-area class, but the palette on the map
+    // still shows it, so the legend must too (a 9-class winter must show 9)
+    var entries = (function () {
+      var byId = {};
+      (r.classes || []).forEach(function (c) { byId[c.classId] = c; });
+      var ids = (r.activeClassIds && r.activeClassIds.length)
+        ? r.activeClassIds.slice()
+        : (r.classes || []).map(function (c) { return c.classId; });
+      ids.forEach(function (id) {
+        if (byId[id]) return;
+        var cls = classById(id, r.scheme);
+        if (cls) byId[id] = { classId: id, name: className(cls), color: cls.color, percent: null };
+      });
+      return ids.map(function (id) { return byId[id]; }).filter(Boolean);
+    })();
+    // pack entries into rows by the MEASURED text width (up to 4 per row)
+    // and size the legend area from the actual row count — the height can
+    // never clip a class again, whatever the active count (8, 9, 11)
+    var measure = document.createElement("canvas").getContext("2d");
+    measure.font = "600 " + legSize + "px " + canvasFont();
+    var sw = Math.round(legSize * 1.1), gapX = Math.round(legSize * 1.1);
+    var maxW = W - 2 * pad;
+    var packed = [[]], rowW = 0;
+    entries.forEach(function (cl) {
+      var label = cl.name + (cl.percent != null ? " · " + fmt(cl.percent, 1) + "%" : "");
+      var w = sw + 8 + measure.measureText(label).width + gapX;
+      var row = packed[packed.length - 1];
+      if (row.length && (row.length >= 4 || rowW + w > maxW)) { packed.push([]); rowW = 0; row = packed[packed.length - 1]; }
+      row.push({ cl: cl, label: label, w: w });
+      rowW += w;
+    });
+    var rowH = Math.round(legSize * 2.1);
+    var legendH = packed.length * rowH + Math.round(pad * 0.75);
     var out = document.createElement("canvas");
     out.width = W;
     out.height = bands + H + legendH + capH;
@@ -2584,20 +2629,20 @@
     c2.fillStyle = "#151515";
     c2.font = "700 " + titleSize + "px " + canvasFont();
     c2.fillText(title, isAr ? out.width - pad : pad, Math.round(titleSize * 1.35));
-    // active seasonal legend: colour + class name (+ share), 4 per row, RTL order
-    var colW = out.width / 4;
-    r.classes.forEach(function (cl, i) {
-      var row = Math.floor(i / 4), col = i % 4;
-      var order = isAr ? 3 - col : col;
-      var x = order * colW + (isAr ? -pad * 0.6 : pad * 0.6);
-      var y = bands + H + Math.round(legSize * (1.35 + row * 2.1));
-      c2.fillStyle = cl.color;
-      var sw = Math.round(legSize * 1.1);
-      c2.fillRect(isAr ? x - sw : x, y - sw, sw, sw);
-      c2.fillStyle = "#333";
-      c2.font = "600 " + legSize + "px " + canvasFont();
-      c2.textAlign = isAr ? "right" : "left";
-      c2.fillText(cl.name + (cl.percent != null ? " · " + fmt(cl.percent, 1) + "%" : ""), isAr ? x - sw - 8 : x + sw + 8, y);
+    // active seasonal legend: swatch + class name (+ share), laid out from
+    // the packed rows — every active class, nothing clipped, RTL flows right
+    c2.font = "600 " + legSize + "px " + canvasFont();
+    packed.forEach(function (row, ri) {
+      var y = bands + H + Math.round(legSize * (1.35 + ri * 2.1));
+      var x = isAr ? out.width - pad : pad;
+      row.forEach(function (it) {
+        c2.fillStyle = it.cl.color;
+        c2.fillRect(isAr ? x - sw : x, y - sw, sw, sw);
+        c2.fillStyle = "#333";
+        c2.textAlign = isAr ? "right" : "left";
+        c2.fillText(it.label, isAr ? x - sw - 8 : x + sw + 8, y);
+        x = isAr ? x - it.w : x + it.w;
+      });
     });
     // caption
     var bits = [];

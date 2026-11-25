@@ -24,27 +24,27 @@
     general: {
       key: "general",
       classes: [
-        { id: 1, code: "WTR", en: "Water", ar: "مياه", color: "#2f80ed" },
-        { id: 2, code: "URB", en: "Urban", ar: "عمران", color: "#d9483b" },
-        { id: 3, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#c2a37a" },
-        { id: 4, code: "CRO", en: "Cropland", ar: "أراضٍ زراعية", color: "#55b35a" }
+        { id: 1, code: "WTR", en: "Water", ar: "مياه", color: "#2563EB" },
+        { id: 2, code: "URB", en: "Urban", ar: "عمران", color: "#EF4444" },
+        { id: 3, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#9CA3AF" },
+        { id: 4, code: "CRO", en: "Cropland", ar: "أراضٍ زراعية", color: "#22C55E" }
       ],
       active: { winter: [1, 2, 3, 4], summer: [1, 2, 3, 4], full: [1, 2, 3, 4] }
     },
     crops: {
       key: "crops",
       classes: [
-        { id: 1, code: "WHT", en: "Wheat", ar: "قمح", color: "#ffd23f", family: "winter" },
-        { id: 2, code: "MZE", en: "Maize", ar: "ذرة", color: "#388e3c", family: "summer" },
-        { id: 3, code: "POT", en: "Potato", ar: "بطاطس", color: "#a5642c", family: "winter" },
-        { id: 4, code: "BET", en: "Sugar Beet", ar: "بنجر السكر", color: "#e56db1", family: "winter" },
-        { id: 5, code: "VEG", en: "Vegetables", ar: "خضروات", color: "#00a878", family: "both" },
-        { id: 6, code: "MED", en: "Medicinal Plants", ar: "نباتات طبية", color: "#7c4dbe", family: "both" },
-        { id: 7, code: "CIT", en: "Citrus", ar: "موالح", color: "#f59e2d", family: "both" },
-        { id: 8, code: "GRP", en: "Grapes", ar: "عنب", color: "#8d55a5", family: "summer" },
-        { id: 9, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#c2a37a", family: "all" },
-        { id: 10, code: "URB", en: "Urban", ar: "عمران", color: "#d9483b", family: "all" },
-        { id: 11, code: "WTR", en: "Water", ar: "مياه", color: "#2f80ed", family: "all" }
+        { id: 1, code: "WHT", en: "Wheat", ar: "قمح", color: "#FACC15", family: "winter" },
+        { id: 2, code: "MZE", en: "Maize", ar: "ذرة", color: "#4ADE80", family: "summer" },
+        { id: 3, code: "POT", en: "Potato", ar: "بطاطس", color: "#C19A6B", family: "winter" },
+        { id: 4, code: "BET", en: "Sugar Beet", ar: "بنجر السكر", color: "#F472B6", family: "winter" },
+        { id: 5, code: "VEG", en: "Vegetables", ar: "خضروات", color: "#15803D", family: "both" },
+        { id: 6, code: "MED", en: "Medicinal Plants", ar: "نباتات طبية", color: "#06B6D4", family: "both" },
+        { id: 7, code: "CIT", en: "Citrus", ar: "موالح", color: "#6B8E23", family: "both" },
+        { id: 8, code: "GRP", en: "Grapes", ar: "عنب", color: "#9333EA", family: "summer" },
+        { id: 9, code: "BAR", en: "Bare Land", ar: "أرض بور", color: "#9CA3AF", family: "all" },
+        { id: 10, code: "URB", en: "Urban", ar: "عمران", color: "#EF4444", family: "all" },
+        { id: 11, code: "WTR", en: "Water", ar: "مياه", color: "#2563EB", family: "all" }
       ],
       active: { winter: [1, 3, 4, 5, 6, 7, 9, 10, 11], summer: [2, 5, 6, 7, 8, 9, 10, 11], full: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }
     }
@@ -446,8 +446,8 @@
       samples_far: "The study area lies far from the built-in sample set — treat the result with care.",
       season_detected: "The custom range spans both seasons: the dominant one was used, so winter and summer crops stay separated.",
       weak_accuracy: "Measured accuracy is low at this level: crop types overlap strongly in the Sentinel-2 signal.",
-      builtin_training: "Trained on the built-in 360-point reference set.",
-      manual_training: "Trained on your uploaded points."
+      builtin_training: "Trained on the built-in reference set",
+      manual_training: "Trained on your uploaded points"
     },
     },
 
@@ -830,8 +830,8 @@
       samples_far: "منطقة الدراسة بعيدة عن طقم العينات المدمج — تعامل مع النتيجة بحذر.",
       season_detected: "المدى المخصص يغطي الموسمين: استُخدم السائد، فتبقى الشتوية والصيفية مفصولتين.",
       weak_accuracy: "الدقة المقاسة منخفضة عند هذا المستوى: تتداخل المحاصيل بقوة في إشارة Sentinel-2.",
-      builtin_training: "دُرِّب على الطقم المرجعي المدمج (360 نقطة).",
-      manual_training: "دُرِّب على نقاطك المرفوعة."
+      builtin_training: "دُرِّب على الطقم المرجعي المدمج",
+      manual_training: "دُرِّب على نقاطك المرفوعة"
     },
     },
 

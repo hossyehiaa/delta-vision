@@ -1,5 +1,5 @@
 {
- "version": 3,
+ "version": 4,
  "source": "Validation_Samples_CSV.csv — 360 labelled points, Borj El Arab area",
  "sig_features": [
   "NDVI_p10",
@@ -30,7 +30,7 @@
     "code": "WHT",
     "en": "Wheat",
     "ar": "قمح",
-    "color": "#ffd23f",
+    "color": "#FACC15",
     "family": "winter",
     "group": 4
    },
@@ -39,7 +39,7 @@
     "code": "MZE",
     "en": "Maize",
     "ar": "ذرة",
-    "color": "#388e3c",
+    "color": "#4ADE80",
     "family": "summer",
     "group": 4
    },
@@ -48,7 +48,7 @@
     "code": "POT",
     "en": "Potato",
     "ar": "بطاطس",
-    "color": "#a5642c",
+    "color": "#C19A6B",
     "family": "winter",
     "group": 4
    },
@@ -57,7 +57,7 @@
     "code": "BET",
     "en": "Sugar Beet",
     "ar": "بنجر السكر",
-    "color": "#e56db1",
+    "color": "#F472B6",
     "family": "winter",
     "group": 4
    },
@@ -66,7 +66,7 @@
     "code": "VEG",
     "en": "Vegetables",
     "ar": "خضروات",
-    "color": "#00a878",
+    "color": "#15803D",
     "family": "both",
     "group": 4
    },
@@ -75,7 +75,7 @@
     "code": "MED",
     "en": "Medicinal Plants",
     "ar": "نباتات طبية",
-    "color": "#7c4dbe",
+    "color": "#06B6D4",
     "family": "both",
     "group": 4
    },
@@ -84,7 +84,7 @@
     "code": "CIT",
     "en": "Citrus",
     "ar": "موالح",
-    "color": "#f59e2d",
+    "color": "#6B8E23",
     "family": "both",
     "group": 4
    },
@@ -93,7 +93,7 @@
     "code": "GRP",
     "en": "Grapes",
     "ar": "عنب",
-    "color": "#8d55a5",
+    "color": "#9333EA",
     "family": "summer",
     "group": 4
    },
@@ -102,7 +102,7 @@
     "code": "BAR",
     "en": "Bare Land",
     "ar": "أرض بور",
-    "color": "#c2a37a",
+    "color": "#9CA3AF",
     "family": "all",
     "group": 3
    },
@@ -111,7 +111,7 @@
     "code": "URB",
     "en": "Urban",
     "ar": "عمران",
-    "color": "#d9483b",
+    "color": "#EF4444",
     "family": "all",
     "group": 2
    },
@@ -120,7 +120,7 @@
     "code": "WTR",
     "en": "Water",
     "ar": "مياه",
-    "color": "#2f80ed",
+    "color": "#2563EB",
     "family": "all",
     "group": 1
    }
@@ -921,28 +921,28 @@
     "code": "WTR",
     "en": "Water",
     "ar": "مياه",
-    "color": "#2f80ed"
+    "color": "#2563EB"
    },
    {
     "id": 2,
     "code": "URB",
     "en": "Urban",
     "ar": "عمران",
-    "color": "#d9483b"
+    "color": "#EF4444"
    },
    {
     "id": 3,
     "code": "BAR",
     "en": "Bare Land",
     "ar": "أرض بور",
-    "color": "#c2a37a"
+    "color": "#9CA3AF"
    },
    {
     "id": 4,
     "code": "CRO",
     "en": "Cropland",
     "ar": "أراضٍ زراعية",
-    "color": "#55b35a"
+    "color": "#22C55E"
    }
   ],
   "active": {
