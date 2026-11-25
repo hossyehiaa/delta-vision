@@ -8,9 +8,12 @@ const E = require("../../engine/_gee_engine");
 const { json, readBody } = require("../_db");
 const cache = require("../_gee_cache");
 
-/* Byte cache + in-flight dedupe: a completed classification fires a
- * background warm-up for the PNG, so the later "Export" click reads warm
- * bytes (< 1 s) instead of re-running the Earth Engine render (~50 s). */
+/* Byte cache + in-flight dedupe + Neon persistence: a completed
+ * classification fires a background warm-up for the PNG, so the later
+ * "Export" click reads warm bytes (< 1 s) instead of re-running the Earth
+ * Engine render (~40-55 s). The Neon mirror matters because Vercel may
+ * route the warm-up and the click to different lambda instances. */
+const { getPool } = require("../_db");
 const PNG_TTL_MS = 10 * 60 * 1000;
 const pngCache = new Map();     // key → { at, buf }
 const pngInflight = new Map();  // key → Promise<Buffer>
@@ -19,6 +22,38 @@ function pngGet(key) {
   if (!hit) return null;
   if (Date.now() - hit.at > PNG_TTL_MS) { pngCache.delete(key); return null; }
   return hit.buf;
+}
+async function pngFromNeon(key) {
+  try {
+    const pool = await getPool().catch(() => null);
+    if (!pool) return null;
+    await pool.query(
+      "CREATE TABLE IF NOT EXISTS gee_png_cache (run_key text PRIMARY KEY, png_base64 text NOT NULL, created_at timestamptz NOT NULL DEFAULT now())"
+    );
+    const r = await pool.query(
+      "SELECT png_base64 FROM gee_png_cache WHERE run_key = $1 AND created_at > now() - interval '10 minutes'",
+      [key]
+    );
+    if (r.rows && r.rows[0]) {
+      const buf = Buffer.from(r.rows[0].png_base64, "base64");
+      pngCache.set(key, { at: Date.now(), buf });
+      return buf;
+    }
+  } catch (e) { /* best-effort */ }
+  return null;
+}
+function pngToNeon(key, buf) {
+  Promise.resolve().then(async () => {
+    try {
+      const pool = await getPool().catch(() => null);
+      if (!pool) return;
+      await pool.query(
+        "INSERT INTO gee_png_cache (run_key, png_base64, created_at) VALUES ($1, $2, now()) " +
+        "ON CONFLICT (run_key) DO UPDATE SET png_base64 = EXCLUDED.png_base64, created_at = now()",
+        [key, buf.toString("base64")]
+      );
+    } catch (e) { /* best-effort */ }
+  }).catch(() => {});
 }
 function renderPng(key, input) {
   const cached = pngGet(key);
@@ -32,6 +67,7 @@ function renderPng(key, input) {
       const buf = Buffer.from(await res.arrayBuffer());
       pngCache.set(key, { at: Date.now(), buf });
       while (pngCache.size > 8) pngCache.delete(pngCache.keys().next().value);
+      pngToNeon(key, buf);
       return buf;
     })
     .finally(() => { pngInflight.delete(key); });
@@ -64,7 +100,9 @@ module.exports = async function (req, res) {
       thumbDim: 1400,
     };
     if (!input.algorithm) return json(res, { error: "unknown_algorithm" }, 400);
-    const buf = await renderPng(cache.runKey(body), input);
+    const key = cache.runKey(body);
+    const warm = pngGet(key) || await pngFromNeon(key);
+    const buf = warm || await renderPng(key, input);
     res.writeHead(200, {
       "Content-Type": "image/png",
       "Content-Length": buf.length,
