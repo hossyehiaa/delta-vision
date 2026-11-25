@@ -2453,10 +2453,13 @@
       });
     }
     var b = G.collectionBbox(state.aoi.fc);
-    var z = 14;
-    var grid = tileGridFor(b, z);
-    while (Math.max(grid.nx, grid.ny) * 256 < 2000 && z < 18) { z++; grid = tileGridFor(b, z); }
-    while (grid.nx * grid.ny > 400 && z > 11) { z--; grid = tileGridFor(b, z); }
+    // Stitch zoom is picked from the AOI size so the whole grid stays within
+    // 9–30 tiles — deep enough to be sharp, small enough that Earth Engine
+    // renders them all quickly (and most are already warm from the map, which
+    // caps its own native zoom at 13). Borj El Arab lands on z12/z13.
+    var z = 13, grid = tileGridFor(b, z);
+    while (grid.nx * grid.ny > 30 && z > 8) { z--; grid = tileGridFor(b, z); }
+    while (grid.nx * grid.ny < 9 && z < 17) { z++; grid = tileGridFor(b, z); }
     var total = grid.nx * grid.ny;
     toast(t("ws.results.pngTiles", { n: total }));
     var tiles = new Array(total);
@@ -2490,8 +2493,20 @@
         tiles.forEach(function (img, i) {
           if (img) ctx.drawImage(img, (i % grid.nx) * 256, Math.floor(i / grid.nx) * 256, 256, 256);
         });
+        // ≥2000 px on the long side, nearest-neighbour so the classification
+        // pixels stay crisp instead of blurring into each other
+        var longSide = Math.max(W, H);
+        if (longSide < 2000) {
+          var k = 2000 / longSide;
+          var up = document.createElement("canvas");
+          up.width = Math.round(W * k); up.height = Math.round(H * k);
+          var uc = up.getContext("2d");
+          uc.imageSmoothingEnabled = false;
+          uc.drawImage(cv, 0, 0, up.width, up.height);
+          cv = up; W = up.width; H = up.height;
+        }
         var out = new Image();
-        out.onload = function () { resolve({ img: out, w: W, h: H, ctx: ctx }); };
+        out.onload = function () { resolve({ img: out, w: W, h: H, ctx: null }); };
         out.onerror = function () { reject({ code: "compose" }); };
         out.src = cv.toDataURL("image/png");
       };
