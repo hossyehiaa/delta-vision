@@ -2466,11 +2466,11 @@
     var idx = 0, done = 0, failures = 0, inFlight = 0;
     return new Promise(function (resolve, reject) {
       var next = function () {
-        while (idx < total && inFlight < 12) {
+        while (idx < total && inFlight < 3) {
           (function (i) {
             inFlight++;
             var url = r.tileUrl.replace("{z}", z).replace("{x}", String(grid.x0 + (i % grid.nx))).replace("{y}", String(grid.y0 + Math.floor(i / grid.nx)));
-            loadTile(url, 2).then(function (img) {
+            loadTile(url, 4).then(function (img) {
               tiles[i] = img; done++; inFlight--;
               if (done === total) finish();
               else next();
@@ -2520,14 +2520,27 @@
     var y0 = Math.floor(tl[1]), y1 = Math.floor(br[1]);
     return { x0: x0, y0: y0, nx: x1 - x0 + 1, ny: y1 - y0 + 1 };
   }
-  function loadTile(url, retries) {
-    return fetch(url, { mode: "cors" }).then(function (res) {
-      if (!res.ok) throw new Error("HTTP " + res.status);
+  /* One map tile. Earth Engine dynamic maps rate-limit bursts with 429, so:
+   * "force-cache" first (tiles the map already displayed come straight from
+   * the browser cache — no request at all), then real fetches with a low
+   * concurrency and a 429-aware backoff (800 ms → 2 s → 5 s → 8 s). */
+  function loadTile(url, retries, useCache) {
+    if (useCache == null) useCache = true;
+    var attempt = fetch(url, { mode: "cors", cache: useCache ? "force-cache" : "default" }).then(function (res) {
+      // a cached response that is actually a 429 must not be reused
+      if (!res.ok) throw Object.assign(new Error("HTTP " + res.status), { status: res.status });
       return res.blob();
     }).then(function (blob) {
       return createImageBitmap(blob);
-    }).catch(function (e) {
-      if (retries > 0) return new Promise(function (r) { setTimeout(r, 700); }).then(function () { return loadTile(url, retries - 1); });
+    });
+    return attempt.catch(function (e) {
+      var status = e && e.status;
+      if (retries > 0) {
+        var backoff = status === 429 ? [800, 2000, 5000, 8000][Math.min(3, 4 - retries)] : 700;
+        return new Promise(function (r) { setTimeout(r, backoff); }).then(function () {
+          return loadTile(url, retries - 1, false);   // real request, skip the cache
+        });
+      }
       throw e;
     });
   }
