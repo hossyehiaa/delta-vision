@@ -454,16 +454,19 @@
 
   // ---------------------------------------------------------------- the map
   var map = null, aoiLayer = null, samplesLayer = null, overlayLayer = null, drawLayer = null, sceneLayer = null, sceneActive = null;
+  var overlayPreviewLayer = null, bakedOverlay = null, bakedCanvas = null, bakedUrl = null, bakePromise = null;
   var gtLayer = null, basemaps = null, activeBasemap = "satellite", hybridLabels = null, abOn = false;
-  /* Earth Engine dynamic-map overlays: tiles are natively rendered to ~z13–14
-   * (Sentinel-2 10 m); beyond that EE throttles/drops requests and Leaflet
-   * would discard the loaded imagery. maxNativeZoom keeps z13 tiles on screen
-   * while zooming to 19 (upscaled), keepBuffer holds a wide ring around the
-   * viewport, updateWhenIdle batches requests, and failed tiles retry twice
-   * with a backoff instead of vanishing. */
+  /* Earth Engine dynamic-map overlays: a zoom-in can ask Earth Engine for
+   * dozens of cold dynamic tiles at once, and the engine throttles/drops
+   * individual tiles — Leaflet then discards the loaded imagery and blank
+   * holes appear in the middle of the layer. Native rendering is capped at
+   * z12 so a zoom beyond that upscales already-loaded tiles locally; failed
+   * tiles retry up to five times with exponential backoff. The
+   * classification overlay goes further and is baked into a single
+   * L.imageOverlay (see bakeOverlay) so it issues no tile request at all. */
   function geeTileOpts(extra) {
     return Object.assign({
-      maxNativeZoom: 13, maxZoom: 19, keepBuffer: 6,
+      maxNativeZoom: 12, maxZoom: 19, keepBuffer: 6,
       updateWhenIdle: true, updateWhenZooming: false,
     }, extra || {});
   }
@@ -472,13 +475,13 @@
       var tile = ev.tile;
       if (!tile) return;
       var tries = +(tile.getAttribute("data-retries") || 0);
-      if (tries >= 2) return;                       // up to 2 retries, then give up
+      if (tries >= 5) return;                       // 5 retries, then give up
       tile.setAttribute("data-retries", String(tries + 1));
       setTimeout(function () {
         var src = tile.src;                         // same URL (throttle/timeout retry)
         tile.src = "";
         tile.src = src;
-      }, tries === 0 ? 600 : 1800);
+      }, 500 * Math.pow(2, tries));   // 0.5 s → 1 s → 2 s → 4 s → 8 s
     });
   }
   function initMap() {
@@ -535,6 +538,7 @@
     });
     $("#overlay-opacity").addEventListener("input", function () {
       if (overlayLayer) overlayLayer.setOpacity(parseFloat(this.value));
+      if (bakedOverlay && bakedOverlay !== overlayLayer) bakedOverlay.setOpacity(parseFloat(this.value));
     });
     $("#fit-btn").addEventListener("click", fitAoi);
     $("#fullscreen-btn").addEventListener("click", toggleFullscreen);
@@ -645,6 +649,7 @@
     }
   }
   function abTargetElement() {
+    if (bakedOverlay) return bakedOverlay._image || null;   // the baked raster is the live overlay
     if (!overlayLayer) return null;
     if (overlayLayer.getContainer) { var c = overlayLayer.getContainer(); if (c) return c; }
     return overlayLayer._image || null;
@@ -1738,7 +1743,6 @@
         runCache.set(cacheKey, res);  // instant on the way back
         if (runCache.size > 24) runCache.delete(runCache.keys().next().value);
         saveRunSnapshot(input, res);  // server history (no-op when offline / not signed in via server)
-        warmExportPng(input);         // background: render the export PNG once
       }
       done();
     };
@@ -1774,17 +1778,104 @@
 
   function showOverlay() {
     if (overlayLayer) { map.removeLayer(overlayLayer); overlayLayer = null; }
+    if (overlayPreviewLayer) { map.removeLayer(overlayPreviewLayer); overlayPreviewLayer = null; }
+    if (bakedOverlay) { map.removeLayer(bakedOverlay); bakedOverlay = null; }
+    bakedCanvas = null; bakePromise = null;   // a new run bakes a new raster
     if (!state.results) return;
     if (state.results.tileUrl) {
-      // live Earth Engine run: XYZ tile overlay under the AOI outline
-      overlayLayer = L.tileLayer(state.results.tileUrl, geeTileOpts({ opacity: parseFloat($("#overlay-opacity").value), zIndex: 400 }));
-      attachTileRetry(overlayLayer);
+      // live Earth Engine run: an instant z11 preview (a handful of tiles)
+      // shows the classification right away while the z12 bake runs in the
+      // background; once the baked L.imageOverlay mounts, it replaces the
+      // preview completely and zooming never issues a tile request again
+      overlayPreviewLayer = L.tileLayer(state.results.tileUrl, geeTileOpts({ maxNativeZoom: 11, opacity: parseFloat($("#overlay-opacity").value), zIndex: 400 }));
+      attachTileRetry(overlayPreviewLayer);
+      overlayLayer = overlayPreviewLayer;   // opacity/AB handlers target it while it lives
+      if (state.layers.overlay !== false) overlayPreviewLayer.addTo(map);
+      bakeOverlay(state.results).catch(function (e) {
+        // bake refused (all retries exhausted): the z11 preview stays on
+        // screen, and the PNG export falls back to the server raster
+        try { console.warn("dv: classification bake failed", (e && e.code) || e); } catch (x) { /* noop */ }
+      });
     } else if (state.results.previewImage) {
       var b = state.results.grid.bounds;
       overlayLayer = L.imageOverlay(state.results.previewImage, [[b[1], b[0]], [b[3], b[2]]], { opacity: parseFloat($("#overlay-opacity").value), interactive: false, zIndex: 400 });
     } else return;
-    if (state.layers.overlay !== false) overlayLayer.addTo(map);
+    if (state.layers.overlay !== false && !overlayPreviewLayer) overlayLayer.addTo(map);
     if (abOn) setAbMode(true);   // re-clip the fresh overlay layer
+  }
+  /** Bake the live classification into ONE image overlay. The AOI's z12
+   *  tiles (typically 9–25 for a study area the size of Borj El Arab) are
+   *  fetched with a strict concurrency limit of 3 and up to five retries
+   *  with exponential backoff until 100 % of them succeed — a single
+   *  exhausted tile fails the bake rather than leaving a hole. They are
+   *  stitched onto an offscreen canvas clipped exactly to the AOI bounds,
+   *  converted to a Blob URL and mounted as an L.imageOverlay with
+   *  image-rendering: pixelated. From then on, zooming to any level is
+   *  purely local: Leaflet scales the baked image, so no Earth Engine
+   *  request is issued on zoom and no blank hole can ever appear. The
+   *  clipped canvas is also the export raster, which makes the PNG export
+   *  instant. On failure the z11 preview layer simply stays on screen. */
+  function bakeOverlay(r) {
+    if (bakePromise) return bakePromise;
+    bakePromise = new Promise(function (resolve, reject) {
+      var b = G.collectionBbox(state.aoi.fc);
+      var z = 12, grid = tileGridFor(b, z);
+      while (grid.nx * grid.ny > 64 && z > 2) { z--; grid = tileGridFor(b, z); }   // huge AOIs bake at a lower zoom
+      while (grid.nx * grid.ny < 4 && z < 12) { z++; grid = tileGridFor(b, z); }   // tiny AOIs keep some detail
+      var total = grid.nx * grid.ny;
+      var tiles = new Array(total);
+      var idx = 0, inFlight = 0, failed = false;
+      var next = function () {
+        while (idx < total && inFlight < 3 && !failed) {
+          (function (i) {
+            inFlight++;
+            var url = r.tileUrl.replace("{z}", z).replace("{x}", String(grid.x0 + (i % grid.nx))).replace("{y}", String(grid.y0 + Math.floor(i / grid.nx)));
+            loadTile(url, 5).then(function (img) {
+              tiles[i] = img; inFlight--;
+              if (failed) return;
+              if (tiles.every(Boolean)) stitch(); else next();
+            }, function () {
+              inFlight--;
+              if (failed) return;
+              failed = true;                      // 100 % of tiles or no bake
+              reject({ code: "bake_failed" });
+            });
+          })(idx++);
+        }
+      };
+      var stitch = function () {
+        var W = grid.nx * 256, H = grid.ny * 256;
+        var cv = document.createElement("canvas");
+        cv.width = W; cv.height = H;
+        var ctx = cv.getContext("2d");
+        tiles.forEach(function (img, i) {
+          ctx.drawImage(img, (i % grid.nx) * 256, Math.floor(i / grid.nx) * 256, 256, 256);
+        });
+        // clip exactly to the AOI bounds: fractional tile coords → pixels
+        var tl = ll2tile(b[0], b[3], z), br = ll2tile(b[2], b[1], z);
+        var fx = (tl[0] - grid.x0) * 256, fy = (tl[1] - grid.y0) * 256;
+        var fw = (br[0] - tl[0]) * 256, fh = (br[1] - tl[1]) * 256;
+        var cw = Math.max(2, Math.round(fw)), ch = Math.max(2, Math.round(fh));
+        var out = document.createElement("canvas");
+        out.width = cw; out.height = ch;
+        out.getContext("2d").drawImage(cv, fx, fy, fw, fh, 0, 0, cw, ch);
+        bakedCanvas = out;                       // the export raster
+        out.toBlob(function (blob) {
+          if (!blob) { reject({ code: "bake_blob" }); return; }
+          if (bakedUrl) { try { URL.revokeObjectURL(bakedUrl); } catch (e) { /* noop */ } }
+          bakedUrl = URL.createObjectURL(blob);
+          bakedOverlay = L.imageOverlay(bakedUrl, [[b[1], b[0]], [b[3], b[2]]], {
+            opacity: parseFloat($("#overlay-opacity").value), interactive: false, zIndex: 400, className: "dv-baked"
+          });
+          if (state.layers.overlay !== false) bakedOverlay.addTo(map);
+          if (overlayPreviewLayer) { map.removeLayer(overlayPreviewLayer); overlayPreviewLayer = null; overlayLayer = bakedOverlay; }
+          if (abOn) setAbMode(true);
+          resolve(out);
+        }, "image/png");
+      };
+      next();
+    });
+    return bakePromise;
   }
 
   // ---------------------------------------------------------------- live scene layers (Sentinel-2)
@@ -2362,33 +2453,30 @@
       toast(t("ws.results.pngFailed", { err: (err && err.code) || err }), true);
     });
   }
-  /** the classified raster for export. Live runs ask the server for a
-   *  single-EE-request thumbnail (palette colours, AOI clipped, outside
-   *  transparent) and upscale it to >= 2000 px with nearest-neighbour —
-   *  no client-side tile storm, no Earth Engine 429s. On any endpoint
-   *  failure the tile-stitch fallback runs. Preview mode draws its own
-   *  preview image. */
+  /** the classified raster for export. Live runs reuse the exact canvas
+   *  the map already displays — the baked z12 overlay (clipped to the AOI,
+   *  every tile present) upscaled to >= 2000 px with nearest-neighbour — so
+   *  the export is a local canvas composite, effectively instant and immune
+   *  to Earth Engine rate limits. If the bake is still running, its promise
+   *  is awaited; if it failed, a server-rendered thumbnail (a single
+   *  synchronous EE request) is the fallback, and the direct tile-stitch is
+   *  the last resort. Preview mode draws its own preview image. */
   function buildExportRaster(r) {
     if (!r.tileUrl || !isLive()) {
       return r.previewImage ? buildClassifiedCanvas(r) : Promise.reject({ code: "pngNoTiles" });
     }
+    if (bakePromise) {
+      return bakePromise.then(function (cv) { return canvasToWork(cv); }, function () { return serverExportRaster(r); });
+    }
+    return serverExportRaster(r);
+  }
+  /** fallback raster when no baked canvas exists: the server-side Earth
+   *  Engine thumbnail, then the direct tile-stitch as last resort */
+  function serverExportRaster(r) {
     var url = liveUrl().replace(/\/api\/gee\/run$/, "/api/gee/export-png");
     var body = JSON.stringify(Object.assign({}, (r._input || currentRunInput(r.algorithm)), { kind: "run", thumbDim: 1400 }));
     var ctl = typeof AbortController !== "undefined" ? new AbortController() : null;
     var timer = ctl ? setTimeout(function () { ctl.abort(); }, 95000) : null;
-    // a background warm-up for exactly this request: reuse it (its converted
-    // raster is kept on the promise, so export + print share one render)
-    var toFallback = function () { return buildClassifiedCanvas(r); };
-    if (pngWarm && pngWarm._dvBody === body) {
-      if (pngWarm._dvWork) return Promise.resolve(pngWarm._dvWork);
-      return pngWarm.then(function (res) {
-        if (!res || !res.ok) throw new Error("HTTP " + (res && res.status));
-        return res.blob();
-      }).then(blobToWork).then(function (work) {
-        pngWarm._dvWork = work;
-        return work;
-      }).catch(toFallback);
-    }
     return fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -2406,6 +2494,20 @@
       return buildClassifiedCanvas(r);
     });
   }
+  /** canvas → >= 2000 px work raster; nearest-neighbour keeps the class
+   *  pixels crisp instead of blurring them into each other */
+  function canvasToWork(cv) {
+    var W = cv.width, H = cv.height, longSide = Math.max(W, H);
+    var k = longSide < 2000 ? 2000 / longSide : 1;
+    var out = document.createElement("canvas");
+    out.width = Math.round(W * k); out.height = Math.round(H * k);
+    var ctx = out.getContext("2d");
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, out.width, out.height);
+    ctx.imageSmoothingEnabled = false;
+    ctx.drawImage(cv, 0, 0, out.width, out.height);
+    return { img: out, w: out.width, h: out.height, ctx: ctx };
+  }
   /** EE thumbnail blob → a >= 2000 px work raster (nearest-neighbour keeps
    *  the class pixels crisp instead of blurring them into each other) */
   function blobToWork(blob) {
@@ -2422,26 +2524,6 @@
       ctx.drawImage(bmp, 0, 0, cv.width, cv.height);
       return { img: cv, w: cv.width, h: cv.height, ctx: ctx };
     });
-  }
-  /** fire-and-forget: ask the server to render (and cache) the export PNG
-   *  right after a successful run, so clicking Export later is instant.
-   *  The promise is kept: an Export click while the warm-up is still running
-   *  reuses it (no duplicate Earth Engine render) — and once it resolves the
-   *  bytes come from the server-side cache in ~1 s. */
-  var pngWarm = null;
-  function warmExportPng(input) {
-    if (!isLive() || !input || !input.aoiGeo) return;
-    try {
-      var url = liveUrl().replace(/\/api\/gee\/run$/, "/api/gee/export-png");
-      var body = JSON.stringify(Object.assign({}, input, { kind: "run", thumbDim: 1400 }));
-      pngWarm = fetch(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: body
-      });
-      pngWarm._dvBody = body;
-      pngWarm.catch(function () { /* silent warm */ });
-    } catch (e) { /* silent */ }
   }
   /** the run input for the current UI state (used when a replayed result
    *  carries no stored input) */
@@ -2623,25 +2705,23 @@
     var y0 = Math.floor(tl[1]), y1 = Math.floor(br[1]);
     return { x0: x0, y0: y0, nx: x1 - x0 + 1, ny: y1 - y0 + 1 };
   }
-  /* One map tile. Earth Engine dynamic maps rate-limit bursts with 429, so:
-   * "force-cache" first (tiles the map already displayed come straight from
-   * the browser cache — no request at all), then real fetches with a low
-   * concurrency and a 429-aware backoff (800 ms → 2 s → 5 s → 8 s). */
-  function loadTile(url, retries, useCache) {
-    if (useCache == null) useCache = true;
-    var attempt = fetch(url, { mode: "cors", cache: useCache ? "force-cache" : "default" }).then(function (res) {
-      // a cached response that is actually a 429 must not be reused
+  /* One map tile, for the bake stitcher. Earth Engine dynamic maps
+   * rate-limit bursts with 429, so the stitcher keeps a strict concurrency
+   * of 3 and this helper retries up to five times with exponential backoff
+   * (0.5 s → 1 s → 2 s → 4 s → 8 s; 0.4 s for plain network hiccups).
+   * The bake requires every tile: no missing tiles, no holes. */
+  function loadTile(url, retries) {
+    return fetch(url, { mode: "cors" }).then(function (res) {
       if (!res.ok) throw Object.assign(new Error("HTTP " + res.status), { status: res.status });
       return res.blob();
     }).then(function (blob) {
       return createImageBitmap(blob);
-    });
-    return attempt.catch(function (e) {
+    }).catch(function (e) {
       var status = e && e.status;
       if (retries > 0) {
-        var backoff = status === 429 ? [800, 2000, 5000, 8000][Math.min(3, 4 - retries)] : 700;
+        var backoff = status === 429 ? 500 * Math.pow(2, 5 - retries) : 400;
         return new Promise(function (r) { setTimeout(r, backoff); }).then(function () {
-          return loadTile(url, retries - 1, false);   // real request, skip the cache
+          return loadTile(url, retries - 1);
         });
       }
       throw e;

@@ -397,6 +397,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
 
 .map-wrap { position: relative; border-radius: var(--r-md); overflow: hidden; background: #dfe3dc; }
 #map { height: clamp(380px, 58vh, 640px); width: 100%; background: #dfe3dc; font-family: var(--font); }
+/* the baked classification overlay: one image for the whole AOI, scaled
+ * locally by Leaflet on zoom — nearest-neighbour keeps the class pixels
+ * crisp and guarantees no tile hole can ever appear */
+.dv-baked { image-rendering: pixelated; }
 #map.crosshair .leaflet-container, .leaflet-container.crosshair { cursor: crosshair; }
 .map-tools { position: absolute; z-index: 1100; inset-inline: 10px; bottom: 10px; display: flex; justify-content: space-between; align-items: center; gap: 8px; pointer-events: none; flex-wrap: wrap; }
 .map-tools > * { pointer-events: auto; }
