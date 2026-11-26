@@ -66,7 +66,7 @@ function normalize(body) {
     dateFrom: body.dateFrom || undefined,
     dateTo: body.dateTo || undefined,
     cloudMax: num(body.cloudMax != null ? body.cloudMax : p.cloudMax, 60),
-    rfTrees: num(body.rfTrees != null ? body.rfTrees : p.rfTrees, 100),
+    rfTrees: num(body.rfTrees != null ? body.rfTrees : p.rfTrees, 300),
     kClusters: num(body.kClusters != null ? body.kClusters : p.kClusters, 8),
     knnK: num(body.knnK != null ? body.knnK : p.knnK, 5),
     mlpHidden: body.mlpHidden != null || p.mlpHidden != null

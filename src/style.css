@@ -656,6 +656,10 @@ input[type="checkbox"], input[type="radio"] { accent-color: var(--ink); width: 1
 .level-btn.is-on { border-color: var(--ink); background: var(--lime-soft); box-shadow: var(--shadow-sm); }
 .level-btn.is-on small { color: var(--ink-2); }
 #card-level .hint { margin-top: 10px; }
+/* S1-SAR + S2-optical fusion badge on the level card — mirrors the
+   preview/live mode chip language (pill, muted, small) */
+.fusion-chip { display: inline-flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 0.72rem; font-weight: 500; color: var(--ink-2); background: var(--lime-soft); border: 1px solid var(--line); border-radius: var(--r-pill); padding: 3px 10px; }
+.fusion-chip::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #16a34a; }
 
 #season-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 #season-tabs .tab[disabled] { opacity: .4; cursor: not-allowed; }

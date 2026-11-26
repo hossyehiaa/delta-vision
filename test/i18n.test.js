@@ -95,7 +95,7 @@ for (const a of I.ALGORITHMS) {
   ok(a.params.every((p) => !!I.PARAMS[p] && !!I.dictionaries.en.ws.algorithm[p] && !!I.dictionaries.ar.ws.algorithm[p]), "parameters + labels for " + a.key + " (" + (a.params.join(",") || "none") + ")");
 }
 const def = I.defaults();
-ok(def.rfTrees === 100 && def.knnK === 5 && def.kClusters === 8 && def.mlpHidden === 24 && def.mlpEpochs === 400 && def.cloudMax === 60, "defaults = engine defaults (100 / 5 / 8 / 24 / 400 / 60)");
+ok(def.rfTrees === 300 && def.knnK === 5 && def.kClusters === 8 && def.mlpHidden === 24 && def.mlpEpochs === 400 && def.cloudMax === 60, "defaults = engine defaults (300 / 5 / 8 / 24 / 400 / 60)");
 for (const k in I.PARAMS) { const p = I.PARAMS[k]; ok(p.min <= p.def && p.def <= p.max && p.step > 0 && (p.def - p.min) % p.step === 0, k + " default inside its range and on a step"); }
 
 // period presets — the same dates the engine's resolvePeriod() produces
@@ -107,7 +107,7 @@ ok(fm.dateFrom === "2026-02-01" && fm.dateTo === "2026-05-31", "late winter 2026
 ok(s.dateFrom === "2026-05-01" && s.dateTo === "2026-10-31", "summer 2026 = 2026-05-01 → 2026-10-31");
 ok(js.dateFrom === "2026-06-01" && js.dateTo === "2026-09-30", "summer peak 2026 = 2026-06-01 → 2026-09-30");
 ok(f.dateFrom === "2026-01-01" && f.dateTo === "2026-12-31", "full 2026 = 2026-01-01 → 2026-12-31");
-ok(I.YEARS.join(",") === "2026,2025,2024,2023" && I.DEFAULT_YEAR === 2026, "years 2023–2026, default 2026");
+ok(I.YEARS.join(",") === "2026,2025,2024,2023,2022,2021" && I.DEFAULT_YEAR === 2026, "years 2021–2026, default 2026");
 ok(I.period("custom", 2026, "2026-02-01", "2026-03-15").dateFrom === "2026-02-01", "custom range carries its own dates");
 // season detection: winter = Nov–Apr months, summer = May–Oct; ties → the first month's family
 ok(I.detectFamily("2026-01-15", "2026-03-20") === "winter", "custom Jan–Mar → winter");
@@ -126,7 +126,7 @@ ok(Array.isArray(sigW) && sigW.length === 3 && sigW.every((v) => typeof v === "n
 ok(D.REFERENCE_POINTS && D.REFERENCE_POINTS.n === 795 && Array.isArray(D.REFERENCE_POINTS.points) && D.REFERENCE_POINTS.points.length === 795, "795 built-in reference points (455 train + 340 validation)");
 ok(D.REFERENCE_POINTS.points.every((p) => Array.isArray(p) && p.length === 4 && isFinite(p[0]) && isFinite(p[1]) && isFinite(p[2]) && (p[3] === "train" || p[3] === "validation")), "each reference point = [classId, lon, lat, role]");
 ok(D.REFERENCE_POINTS.points.filter((p) => p[3] === "train").length === 455 && D.REFERENCE_POINTS.points.filter((p) => p[3] === "validation").length === 340, "roles split exactly 455 / 340");
-ok(D.SCHEME_VERSION === 5, "SCHEME_VERSION 5 (stale cached runs miss)");
+ok(D.SCHEME_VERSION === 6, "SCHEME_VERSION 6 (stale cached runs miss)");
 ok(D.BOURJ.ring.length > 50 && D.BOURJ.ring[0][0] === D.BOURJ.ring[D.BOURJ.ring.length - 1][0], "built-in Borj El Arab boundary is a closed ring (" + D.BOURJ.ring.length + " vertices)");
 ok(Math.abs(D.BOURJ.areaM2 / 4200 - 141841.261) < 0.01, "Borj El Arab sample boundary = " + (D.BOURJ.areaM2 / 4200).toFixed(3) + " feddan");
 

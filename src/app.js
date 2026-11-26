@@ -2268,6 +2268,7 @@
     var levelName = r.scheme === "crops" ? t("ws.level.crops") : t("ws.level.general");
     $("#results-run").textContent = t("ws.results.run", { algo: algoName, season: seasonName, period: r.dateFrom + " → " + r.dateTo })
       + " · " + t("ws.results.level", { level: r.scheme === "crops" ? "2" : "1", name: levelName });
+    renderFeatureStack(r);
     // cached render → a subtle chip to recompute from scratch
     var oldChip = document.getElementById("rerun-chip"); if (oldChip) oldChip.remove();
     if (r.fromCache) {
@@ -2459,6 +2460,46 @@
     totals.innerHTML = "";
     statCard(totals, fmt(sumYield, 0) + " ", t("ws.results.dssTotalYield"), t("units.ton"));
     statCard(totals, fmt(sumWater, 0) + " ", t("ws.results.dssTotalWater"), "m³");
+  }
+
+  /** Feature-stack line + workspace chip: tells the user, on every live run,
+   *  whether the model is pure Sentinel-2 optical or the S1-SAR + S2-optical
+   *  fusion stack, with its band and scene counts (results.featureStack). */
+  function renderFeatureStack(r) {
+    var oldLine = document.getElementById("feature-stack-line"); if (oldLine) oldLine.remove();
+    var oldChip = document.getElementById("fusion-chip"); if (oldChip) oldChip.remove();
+    if (!r || r.mode !== "live") return;
+    var fs = r.featureStack;
+    if (!fs || !fs.sar) {
+      if (fs && fs.totalBands) {
+        var ol = el("p", "hint", t("ws.results.fusionOpticalOnly", { bands: fmt(fs.totalBands, 0) }));
+        ol.id = "feature-stack-line";
+        var rl = $("#results-run");
+        if (rl && rl.parentNode) rl.parentNode.insertBefore(ol, rl.nextSibling);
+      }
+      return;
+    }
+    var line = el("p", "hint", t("ws.results.fusionLine", {
+      bands: fmt(fs.totalBands, 0),
+      optical: fmt(fs.opticalBands, 0),
+      sar: fmt(fs.sarBands, 0),
+      s1: fmt(fs.nS1Scenes, 0),
+      s2: fmt(fs.nS2Scenes, 0)
+    }));
+    line.id = "feature-stack-line";
+    var run = $("#results-run");
+    if (run && run.parentNode) run.parentNode.insertBefore(line, run.nextSibling);
+    var chip = el("span", "fusion-chip", t("ws.results.fusionChip"));
+    chip.id = "fusion-chip";
+    chip.title = t("ws.results.fusionLine", {
+      bands: fmt(fs.totalBands, 0),
+      optical: fmt(fs.opticalBands, 0),
+      sar: fmt(fs.sarBands, 0),
+      s1: fmt(fs.nS1Scenes, 0),
+      s2: fmt(fs.nS2Scenes, 0)
+    });
+    var card = document.getElementById("card-level");
+    if (card) card.appendChild(chip);
   }
 
   /** Notes strip + GeoTIFF download + accuracy insight for the current run. */
@@ -3141,7 +3182,7 @@
         + "section{break-inside:avoid;page-break-inside:avoid}tr{break-inside:avoid;page-break-inside:avoid}"
         + "@media print{header{padding:8px 10px}img.map{margin:6px 0}}"
         + "</style></head><body>"
-        + "<header><h1>" + esc(t("ws.results.printTitle")) + "</h1><p>" + esc(levelName + " · " + t("ws.season." + (r.season || "winter")) + " · " + (r.dateFrom || "") + " → " + (r.dateTo || "")) + " · " + esc(state.aoi ? state.aoi.name : "") + " · " + acc + "</p></header>"
+        + "<header><h1>" + esc(t("ws.results.printTitle")) + "</h1><p>" + esc(levelName + " · " + t("ws.season." + (r.season || "winter")) + " · " + (r.dateFrom || "") + " → " + (r.dateTo || "")) + " · " + esc(state.aoi ? state.aoi.name : "") + " · " + acc + (r.featureStack && r.featureStack.sar ? " · " + esc(t("ws.results.fusionChip")) : "") + "</p></header>"
         + "<img class='map' src='" + dataUrl + "' alt=''>"
         + "<section class='classes'><h2>" + esc(t("ws.results.tableTitle")) + "</h2><table><tr><th>" + esc(t("ws.results.class")) + "</th><th class='n'>" + esc(t("units.feddan")) + "</th><th class='n'>km²</th><th class='n'>%</th>"
         + (r.classes.some(function (c) { return c.pa != null; }) ? "<th class='n'>PA</th><th class='n'>UA</th><th class='n'>F1</th>" : "") + "</tr>" + rows

@@ -232,13 +232,26 @@ export interface RunResult {
   areaKm2: number;
   /** label of the AOI the run was executed on */
   aoiName?: string | null;
-  /** how the training set was built: the built-in 360-point reference set
+/** how the training set was built: the built-in 360-point reference set
    *  ("builtin") or the user's uploaded/picked points ("manual") */
   sampleSource?: "builtin" | "manual";
   /** labelled points per active class behind the run */
   sampleClassCounts?: Record<string, number>;
   /** labelled points fed into the run after seasonal filtering */
   nReferencePoints?: number;
+  /** what the classifier actually consumed (drives the UI fusion indicator) */
+  featureStack?: {
+    version: string;
+    opticalBands: number;
+    sarBands: number;
+    totalBands: number;
+    /** Sentinel-1 SAR joined the stack */
+    sar: boolean;
+    /** the orbit pass used (null when SAR was skipped) */
+    sarOrbit: "ASCENDING" | "DESCENDING" | null;
+    nS1Scenes: number;
+    nS2Scenes: number;
+  };
 }
 
 export interface CompareSummaryRow {
@@ -295,22 +308,57 @@ function p<T>(callWithCb: (cb: (result: T, error: unknown) => void) => void): Pr
 }
 
 /* ------------------------------------------------------------------ */
-/* Pipeline (identical to the phase-1 Code Editor app)                 */
+/* Pipeline v3 — Sentinel-2 optical + Sentinel-1 SAR fusion            */
+/*                                                                     */
+/* Optical (the professor's reference guide): SCL cloud mask → surface  */
+/* reflectance incl. the red-edge B5/B6/B7/B8A → NDVI NDWI NDMI(=LSWI)  */
+/* + NDRE EVI SAVI GCVI on every scene → monthly medians (NDVI NDRE     */
+/* NDWI NDMI) + seasonal NDVI statistics + phenology (NDVI_max,         */
+/* NDVI_min, NDVI_amp, NDVI_early_minus_late) + seasonal medians of      */
+/* every band and of the five new indices.                              */
+/* SAR: S1_GRD IW VV+VH of the better-covered orbit pass, 30 m circular  */
+/* median speckle filter, VV/VH mean and std, VH−VV (dB) and the linear  */
+/* RVI = 4·VH/(VV+VH) — for the whole season and its early/mid/late      */
+/* thirds. SAR joins the stack only when the period has S1 scenes.       */
 /* ------------------------------------------------------------------ */
-function maskClouds(img: any) {
+export const S1_DATASET = "COPERNICUS/S1_GRD";
+/** revision of the feature stack — changes whenever a band is added/removed
+ *  (the client cache key and the UI "fusion" indicator read it) */
+export const FEATURE_STACK_VERSION = "v3-s1s2";
+/** every optical band the features are built from (v3 adds the red-edge B5/B6/B7/B8A) */
+const S2_BANDS = ["B2", "B3", "B4", "B5", "B6", "B7", "B8", "B8A", "B11", "B12"];
+/** indices computed on every scene */
+const S2_INDEX_BANDS = ["NDVI", "NDWI", "NDMI", "NDRE", "EVI", "SAVI", "GCVI"];
+/** indices carried by the monthly composites */
+const MONTHLY_BANDS = ["NDVI", "NDRE", "NDWI", "NDMI"];
+/** indices whose seasonal median is an explicit feature */
+const INDEX_MEDIAN_BANDS = ["NDRE", "EVI", "SAVI", "NDMI", "GCVI"];
+
+function maskClouds(img: any, bands: string[] = S2_BANDS) {
   const scl = img.select("SCL");
   const clean = scl.neq(1).and(scl.neq(3)).and(scl.neq(8))
     .and(scl.neq(9)).and(scl.neq(10)).and(scl.neq(11));
   // copyProperties keeps system:time_start so monthly filterDate works
-  return img.updateMask(clean)
-    .select(["B2", "B3", "B4", "B8", "B11", "B12"]).divide(10000)
+  return img.updateMask(clean).select(bands).divide(10000)
     .copyProperties(img, ["system:time_start", "system:index"]);
 }
 function addIndices(img: any) {
+  const nir = img.select("B8"), red = img.select("B4"), green = img.select("B3"), blue = img.select("B2");
+  // never divide by ~0 (dark / saturated pixels) — the clamp keeps the index finite
+  const safe = (x: any) => x.max(1e-4);
   return img
     .addBands(img.normalizedDifference(["B8", "B4"]).rename("NDVI"))
     .addBands(img.normalizedDifference(["B3", "B8"]).rename("NDWI"))
-    .addBands(img.normalizedDifference(["B8", "B11"]).rename("NDMI"));
+    // (B8−B11)/(B8+B11) — published as both NDMI and LSWI
+    .addBands(img.normalizedDifference(["B8", "B11"]).rename("NDMI"))
+    .addBands(img.normalizedDifference(["B8A", "B5"]).rename("NDRE"))
+    // EVI (Huete 2002): 2.5·(NIR−RED)/(NIR + 6·RED − 7.5·BLUE + 1)
+    .addBands(nir.subtract(red).multiply(2.5)
+      .divide(safe(nir.add(red.multiply(6)).subtract(blue.multiply(7.5)).add(1))).rename("EVI"))
+    // SAVI (L = 0.5): 1.5·(NIR−RED)/(NIR+RED+0.5)
+    .addBands(nir.subtract(red).multiply(1.5).divide(safe(nir.add(red).add(0.5))).rename("SAVI"))
+    // GCVI: NIR/GREEN − 1
+    .addBands(nir.divide(safe(green)).subtract(1).rename("GCVI"));
 }
 function rawCollection(aoi: any, startISO: string, endISO: string, maxCloud: number) {
   return ee.ImageCollection(DATASET)
@@ -320,40 +368,216 @@ function rawCollection(aoi: any, startISO: string, endISO: string, maxCloud: num
 function getS2(aoi: any, startISO: string, endISO: string, maxCloud: number) {
   return rawCollection(aoi, startISO, endISO, maxCloud).map(maskClouds).map(addIndices);
 }
+/** cloud-masked RGB reflectance only — the true-colour basemap */
+function getRgbScenes(aoi: any, startISO: string, endISO: string, maxCloud: number) {
+  return rawCollection(aoi, startISO, endISO, maxCloud)
+    .map((img: any) => maskClouds(img, ["B2", "B3", "B4"]));
+}
 function monthDiff(a: string, b: string) {
   const d1 = new Date(a), d2 = new Date(b);
   return (d2.getFullYear() - d1.getFullYear()) * 12 + (d2.getMonth() - d1.getMonth());
 }
-function buildFeatures(s2: any, startISO: string, endISO: string) {
+/** the two instants that cut a period into equal early / mid / late thirds (ISO) */
+export function periodThirds(startISO: string, endISO: string): [string, string] {
+  const a = Date.parse(`${startISO}T00:00:00Z`), b = Date.parse(`${endISO}T00:00:00Z`);
+  const third = (b - a) / 3;
+  return [new Date(a + third).toISOString(), new Date(a + 2 * third).toISOString()];
+}
+/** number of optical bands the stack of a period carries (no round trip needed) */
+export function opticalBandCount(startISO: string, endISO: string): number {
+  const nMonths = Math.round(monthDiff(startISO, endISO)) + 1;
+  return nMonths * MONTHLY_BANDS.length + 5 + 4 + S2_BANDS.length + INDEX_MEDIAN_BANDS.length;
+}
+/** median of the monthly bands over a sub-window — ONE pass over the window's
+ *  scenes; a sub-window without any scene repeats the season-wide median (an
+ *  empty median has no band to select) */
+function windowMedian(s2: any, from: string, to: string, fallback: any) {
+  const win = s2.select(MONTHLY_BANDS).filterDate(from, to);
+  return ee.Image(ee.Algorithms.If(win.size().gt(0), win.median(), fallback));
+}
+export function buildOpticalFeatures(s2: any, startISO: string, endISO: string): any {
+  const seasonMed = s2.median();
+  const seasonMonthly = seasonMed.select(MONTHLY_BANDS);
   const months = ee.List.sequence(0, Math.round(monthDiff(startISO, endISO)));
   const monthly = ee.ImageCollection.fromImages(months.map((n: any) => {
     const d = ee.Date(startISO).advance(n, "month");
-    const m = s2.filterDate(d, d.advance(1, "month")).median();
-    const mSel = ee.Image(ee.Algorithms.If(
-      m.bandNames().size().gt(0),
-      m.select(["NDVI", "NDWI", "NDMI"]),
-      ee.Image.constant([-0.5, -0.5, -0.5]).rename(["NDVI", "NDWI", "NDMI"])
-    ));
+    // a month without a scene repeats the season median — never a fake −0.5,
+    // which would poison NDVI_min / the distance-based classifiers
+    const mSel = windowMedian(s2, d, d.advance(1, "month"), seasonMonthly);
     return mSel.set("system:index", d.format("YYYY_MM")).set("system:time_start", d.millis());
   }));
-  const ndvi = s2.select("NDVI");
-  const stats = ndvi.reduce(ee.Reducer.percentile([10, 50, 90]))
-    .addBands(ndvi.reduce(ee.Reducer.mean()).rename("NDVI_mean"))
-    .addBands(ndvi.reduce(ee.Reducer.stdDev()).rename("NDVI_stdDev"));
-  const med = s2.select(["B4", "B8", "B11", "B12"]).median();
-  return monthly.toBands().addBands(stats).addBands(med);
+  // scene statistics of NDVI in one pass over the collection (percentiles,
+  // mean and sd share their inputs)
+  const ndviStats = ee.Reducer.percentile([10, 50, 90])
+    .combine({ reducer2: ee.Reducer.mean(), sharedInputs: true })
+    .combine({ reducer2: ee.Reducer.stdDev(), sharedInputs: true });
+  const stats = s2.select("NDVI").reduce(ndviStats)
+    .rename(["NDVI_p10", "NDVI_p50", "NDVI_p90", "NDVI_mean", "NDVI_stdDev"]);
+  // phenology from the monthly NDVI composites (robust to single-date cloud residue)
+  const ndviExt = ee.Image(monthly.select("NDVI")
+    .reduce(ee.Reducer.max().combine({ reducer2: ee.Reducer.min(), sharedInputs: true })));
+  const ndviMax = ndviExt.select(0).rename("NDVI_max");
+  const ndviMin = ndviExt.select(1).rename("NDVI_min");
+  const [t1, t2] = periodThirds(startISO, endISO);
+  const phenology = ee.Image.cat([
+    ndviMax,
+    ndviMin,
+    ndviMax.subtract(ndviMin).rename("NDVI_amp"),
+    windowMedian(s2, startISO, t1, seasonMonthly).select("NDVI")
+      .subtract(windowMedian(s2, t2, endISO, seasonMonthly).select("NDVI"))
+      .rename("NDVI_early_minus_late"),
+  ]);
+  return monthly.toBands()
+    .addBands(stats)
+    .addBands(phenology)
+    .addBands(seasonMed.select(S2_BANDS))
+    .addBands(seasonMed.select(
+      INDEX_MEDIAN_BANDS, INDEX_MEDIAN_BANDS.map((b) => `${b}_median`)));
 }
-function makeClassifier(key: AlgoKey, rfTrees: number, knnK: number) {
-  if (key === "rf") return ee.Classifier.smileRandomForest(rfTrees || 100);
-  if (key === "svm") return ee.Classifier.libsvm();
+
+/* ---- Sentinel-1 ---- */
+function rawS1(region: any, startISO: string, endISO: string) {
+  return ee.ImageCollection(S1_DATASET)
+    .filterBounds(region).filterDate(startISO, endISO)
+    .filter(ee.Filter.eq("instrumentMode", "IW"))
+    .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VV"))
+    .filter(ee.Filter.listContains("transmitterReceiverPolarisation", "VH"));
+}
+/** speckle reduction: 30 m circular median (≈ 7×7 pixels at 10 m) on the dB
+ *  backscatter, then the per-scene linear Radar Vegetation Index
+ *  RVI = 4·VH/(VV+VH) with linear power = 10^(dB/10). */
+function refineS1(img: any) {
+  const speckle = img.select(["VV", "VH"]).focal_median(30, "circle", "meters");
+  const vvLin = speckle.select("VV").divide(10).pow(10);
+  const vhLin = speckle.select("VH").divide(10).pow(10);
+  const rvi = vhLin.multiply(4).divide(vvLin.add(vhLin)).rename("RVI");
+  return speckle.addBands(rvi)
+    .copyProperties(img, ["system:time_start", "system:index", "orbitProperties_pass"]);
+}
+/** IW VV+VH scene count of the period per orbit pass */
+function s1SceneCounts(region: any, startISO: string, endISO: string) {
+  const col = rawS1(region, startISO, endISO);
+  return ee.Dictionary({
+    asc: col.filter(ee.Filter.eq("orbitProperties_pass", "ASCENDING")).size(),
+    desc: col.filter(ee.Filter.eq("orbitProperties_pass", "DESCENDING")).size(),
+  });
+}
+/** the six SAR features of one temporal window */
+export const SAR_BASE_FEATURES = ["VV_mean", "VH_mean", "VV_std", "VH_std", "VH_VV_diff", "RVI"];
+export const SAR_WINDOWS = ["", "_early", "_mid", "_late"];
+export const SAR_FEATURES: string[] =
+  SAR_WINDOWS.flatMap((w) => SAR_BASE_FEATURES.map((f) => f + w));
+
+/** the six SAR features of one temporal window — speckle-filtered VV, VH and
+ *  RVI are read ONCE per scene: means and standard deviations share their
+ *  inputs in a single reducer pass over the window */
+function sarWindow(s1: any, from: string, to: string, suffix: string, fallback: any | null) {
+  const win = s1.filterDate(from, to).select(["VV", "VH", "RVI"]);
+  // one reducer (mean + sd sharing their input) applied to each of the three
+  // bands of every scene → six band-interleaved outputs in a single pass:
+  // VV_mean, VV_stdDev, VH_mean, VH_stdDev, RVI_mean, RVI_stdDev
+  const red = ee.Reducer.mean()
+    .combine({ reducer2: ee.Reducer.stdDev(), sharedInputs: true });
+  const r = ee.Image(win.reduce(red));
+  const vvMean = r.select(0), vhMean = r.select(2);
+  const cat = ee.Image.cat([
+    vvMean.rename("VV_mean" + suffix),
+    vhMean.rename("VH_mean" + suffix),
+    r.select(1).rename("VV_std" + suffix),
+    r.select(3).rename("VH_std" + suffix),
+    vhMean.subtract(vvMean).rename("VH_VV_diff" + suffix),
+    r.select(4).rename("RVI" + suffix),
+  ]);
+  const names = SAR_BASE_FEATURES.map((f) => f + suffix);
+  if (!fallback) return cat.rename(names);
+  // no scene in the sub-window (or a single one, whose std is undefined)
+  // → the season-wide value, so the band set never changes
+  return ee.Image(ee.Algorithms.If(win.size().gt(0), cat, fallback))
+    .rename(names).unmask(fallback, false);
+}
+export function buildSarFeatures(s1: any, startISO: string, endISO: string): any {
+  const [t1, t2] = periodThirds(startISO, endISO);
+  const season = sarWindow(s1, startISO, endISO, "", null);
+  return season
+    .addBands(sarWindow(s1, startISO, t1, "_early", season))
+    .addBands(sarWindow(s1, t1, t2, "_mid", season))
+    .addBands(sarWindow(s1, t2, endISO, "_late", season));
+}
+
+/** Hyper-parameters selected by 5-fold CV INSIDE the training points only
+ *  (scripts/dv/tune_cv.js, work/tune/results_*.json; the validation points
+ *  were never consulted). Training-CV Macro-F1, RF 300 trees:
+ *    winter 0.447 · summer 0.467 (full 72-band stack, single-stage). */
+export const TUNED = {
+  /** radius (m) of the buffer sampled around every labelled point — 10 m keeps
+   *  every labelled point (5 m loses 9–13 % of them) with the same training-CV
+   *  Macro-F1 as 15 m (winter 0.442 vs 0.441, summer 0.462 vs 0.463) */
+  sampleBufferM: 10,
+  /** 300 trees / min-leaf 3: ≥ 100 trees / min-leaf 1 in both seasons
+   *  (winter 0.447 vs 0.442, summer 0.467 vs 0.462) */
+  rf: { trees: 300, minLeaf: 3 },
+  /** no grid point beat this setting (training-CV Macro-F1 within ±0.002) */
+  gtb: { trees: 60, shrinkage: 0.005 },
+  /** RBF gamma = gammaPerBand / number of input bands; cost 10 — the best grid
+   *  point in both seasons (winter 0.446, summer 0.425 vs 0.423 / 0.413 at
+   *  gamma 1 / cost 1) */
+  svm: { gammaPerBand: 0.25, cost: 10 },
+  knn: 5,
+  /** fixed RF/GTB seed → the same inputs always give the same map */
+  seed: 42,
+};
+
+export function makeClassifier(key: AlgoKey, opts: { rfTrees?: number; knnK?: number; nBands?: number }) {
+  const trees = opts.rfTrees || TUNED.rf.trees;
+  if (key === "rf") {
+    return ee.Classifier.smileRandomForest(trees, null, TUNED.rf.minLeaf, 0.5, null, TUNED.seed);
+  }
+  if (key === "svm") {
+    // RBF kernel on z-scored bands (see standardize); gamma scales with 1/bands
+    const gamma = TUNED.svm.gammaPerBand / Math.max(1, opts.nBands || 1);
+    return ee.Classifier.libsvm("Voting", "C_SVC", "RBF", true, null, gamma, null, TUNED.svm.cost);
+  }
   if (key === "cart") return ee.Classifier.smileCart();
-  if (key === "gtb") return ee.Classifier.smileGradientTreeBoost(60);
+  if (key === "gtb") {
+    return ee.Classifier.smileGradientTreeBoost(TUNED.gtb.trees, TUNED.gtb.shrinkage, 0.7, null, null, TUNED.seed);
+  }
   if (key === "nb") return ee.Classifier.smileNaiveBayes();
-  if (key === "knn") return ee.Classifier.smileKNN(Math.min(Math.max(knnK || 5, 1), 15));
+  if (key === "knn") {
+    return ee.Classifier.smileKNN(Math.min(Math.max(opts.knnK || TUNED.knn, 1), 15));
+  }
   if (key === "mindist_e") return ee.Classifier.minimumDistance("euclidean");
   if (key === "mindist_m") return ee.Classifier.minimumDistance("mahalanobis");
   if (key === "mlp") return null; // hybrid — handled by trainMlp/mlpClassifyImage
   throw new GEEError("unknown_algorithm", key);
+}
+
+/** classifiers that measure distances between feature vectors */
+const DISTANCE_BASED: AlgoKey[] = ["svm", "knn", "mindist_e"];
+
+/** z-score the stack with the TRAINING-table statistics — distance-based
+ *  classifiers only (Random Forest, boosting, CART and naive Bayes are
+ *  scale-invariant, the hybrid MLP standardizes itself, Mahalanobis runs on
+ *  its 9 decorrelated bands). dB-scaled SAR backscatter would otherwise
+ *  outweigh every index in a Euclidean or RBF distance. Returns the
+ *  standardized image and a mapper that applies the SAME transform to any
+ *  sampled table (training and validation rows alike). */
+export function standardize(feats: any, trainTable: any, bands: any) {
+  const stats = trainTable.reduceColumns({
+    selectors: bands,
+    reducer: ee.Reducer.mean().combine({ reducer2: ee.Reducer.stdDev(), sharedInputs: true }),
+  });
+  const mu = ee.List(stats.get("mean"));
+  const sd = ee.List(stats.get("stdDev")).map((v: any) => ee.Number(v).max(1e-6));
+  const featsStd = feats.select(bands)
+    .subtract(ee.Image.constant(mu)).divide(ee.Image.constant(sd)).rename(bands);
+  const idx = ee.List.sequence(0, bands.size().subtract(1));
+  const mapTable = (table: any) => table.map((f: any) => {
+    const z = idx.map((i: any) => ee.Number(f.get(ee.String(bands.get(i))))
+      .subtract(ee.Number(mu.get(i))).divide(ee.Number(sd.get(i))));
+    return ee.Feature(f.geometry(), f.toDictionary()
+      .combine(ee.Dictionary.fromLists(bands, z), true));
+  });
+  return { featsStd, mapTable };
 }
 
 /** Mahalanobis runs on these 9 decorrelated seasonal summary bands — the
@@ -576,7 +800,10 @@ export async function buildScene(params: PeriodInput & {
   const aoi = ee.Geometry.Polygon([BORJ_COORDS]);
   const { start, end } = resolvePeriod(params);
   const cloud = params.cloudMax ?? 60;
-  const s2 = getS2(aoi, start, end, cloud);
+  // the basemap needs reflectance only — the index bands are not computed for it
+  const s2 = params.layer === "truecolor"
+    ? getRgbScenes(aoi, start, end, cloud)
+    : getS2(aoi, start, end, cloud);
   const nImages = await p<number>((cb) => rawCollection(aoi, start, end, cloud).size().getInfo(cb));
   if (process.env.DV_TRACE && timings.length) {
     console.error("DV_TRACE " + JSON.stringify(Object.fromEntries(timings)));
@@ -774,14 +1001,16 @@ function selectTrainingPoints(opts: {
 }
 
 /** Feature-collection of buffered training points: every point is buffered by
- *  15 m so ~7 pixels at 10 m are sampled per point — enough rows for the
+ *  TUNED.sampleBufferM (radius chosen by 5-fold CV inside the training points)
+ *  so several pixels at 10 m are sampled per point — enough rows for the
  *  Mahalanobis covariance while staying inside the homogeneous field patch
  *  around each point. All pixels of one point share the point's split value
- *  (grouped 70/30, no leakage). */
+ *  (the professor's train / validation roles, no leakage). */
 function trainingFC(points: ReferencePoint[]): any {
+  const r = TUNED.sampleBufferM;
   return ee.FeatureCollection(
     points.map((p) => ee.Feature(
-      ee.Geometry.Point([p.lon, p.lat]).buffer(15),
+      ee.Geometry.Point([p.lon, p.lat]).buffer(r),
       { class: p.classId, split: p.split }
     ))
   );
@@ -1101,18 +1330,10 @@ async function fcToMlpRows(fc: any, bandNames: string[]): Promise<MlpRow[]> {
 }
 
 /* ------------------------------------------------------------------ */
-/* Training-table cache (optional adapter, set by the API layer)       */
-/*                                                                    */
-/* The 360-point Sentinel-2 training feature table for a given         */
-/* (scheme, family, period, cloud, AOI, points) is deterministic:      */
-/* materialising it once (getInfo) and replaying the SAME rows on the  */
-/* next run skips the image-sampling round trip (the 5–10 s part)      */
-/* without touching the scientific pipeline — same rows, same split,   */
-/* same classifier training. In-memory for warm lambdas; the adapter   */
-/* may mirror it in Neon so cold starts hit too.                       */
+/* Earth Engine client handle                                          */
 /* ------------------------------------------------------------------ */
-/** the authenticated EE client (after getEE()) — used by the API layer's
- *  cache adapter and by diagnostics. */
+/** the authenticated EE client (after getEE()) — used by the diagnostics
+ *  scripts and by tests that need raw ee.* objects. */
 export function eeClient(): any {
   return ee;
 }
@@ -1133,6 +1354,31 @@ async function withCapacityRetry<T>(fn: () => Promise<T>, attempts = 2): Promise
   }
 }
 
+/** The run's feature stack over "AOI ∪ sample points": the optical stack
+ *  always, plus the SAR stack when the period has Sentinel-1 IW VV+VH scenes
+ *  over that region. One orbit pass is used — the better-covered one — so
+ *  the temporal statistics are not split by the ascending/descending
+ *  acquisition geometry. A period without any S1 scene runs optical-only
+ *  (never an error; the result notes `sar_skipped`). */
+async function buildRunStack(
+  region: any, start: string, end: string, cloud: number, countsP?: Promise<any>
+): Promise<{
+  feats: any; optical: any; sar: any | null;
+  sarOrbit: "ASCENDING" | "DESCENDING" | null; nS1: number;
+}> {
+  const optical = buildOpticalFeatures(getS2(region, start, end, cloud), start, end);
+  const counts = await (countsP ?? p<any>((cb) =>
+    s1SceneCounts(region, start, end).getInfo(cb)).catch(() => null));
+  const asc = Number(counts?.asc) || 0, desc = Number(counts?.desc) || 0;
+  if (!asc && !desc) return { feats: optical, optical, sar: null, sarOrbit: null, nS1: 0 };
+  const sarOrbit: "ASCENDING" | "DESCENDING" = asc >= desc ? "ASCENDING" : "DESCENDING";
+  const s1 = rawS1(region, start, end)
+    .filter(ee.Filter.eq("orbitProperties_pass", sarOrbit))
+    .map(refineS1);
+  const sar = buildSarFeatures(s1, start, end);
+  return { feats: optical.addBands(sar), optical, sar, sarOrbit, nS1: sarOrbit === "ASCENDING" ? asc : desc };
+}
+
 async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   const t0 = Date.now();
   await getEE();
@@ -1146,7 +1392,7 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     ? SCHEMES.crops.classes.map((c) => c.id).filter((id) => !active.includes(id))
     : [];
   const cloud = input.cloudMax ?? 60;
-  const rfTrees = input.rfTrees ?? 100;
+  const rfTrees = input.rfTrees ?? TUNED.rf.trees;
   const knnK = input.knnK ?? 5;
   const kClusters = Math.min(Math.max(input.kClusters ?? 8, 2), 30);
 
@@ -1163,14 +1409,25 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   // lie mostly OUTSIDE the default Borj El Arab AOI, so features must be
   // built over the union or the training set would come back empty
   const region = unionRegion(aoi, trainingPoints);
-  // independent count — kicked off immediately, awaited with the other
-  // round trips at the end (it never gates the graph construction); the
-  // immediate catch keeps an early friendly error from leaving an unhandled
-  // rejection behind
+  // independent counts — kicked off immediately, awaited with the other
+  // round trips (they never gate the graph construction); the immediate
+  // catches keep an early friendly error from leaving an unhandled rejection
   const nImagesP = p<number>((cb) =>
     rawCollection(aoi, start, end, cloud).size().getInfo(cb)).catch(() => 0);
-  const s2 = getS2(region, start, end, cloud);
-  const feats = buildFeatures(s2, start, end);
+  const s1CountsP = p<any>((cb) =>
+    s1SceneCounts(region, start, end).getInfo(cb)).catch(() => null);
+  // v3 fusion stack: optical always, SAR when the period has S1 scenes
+  const stack = await buildRunStack(region, start, end, cloud, s1CountsP);
+  if (process.env.DV_TRACE) console.error(`DV_TRACE t_stack_built ${Date.now() - t0}ms`);
+  const { feats, optical, sar } = stack;
+  const sarOrbit = stack.sarOrbit;
+  const opticalBands = opticalBandCount(start, end);
+  const totalBands = opticalBands + (sar ? SAR_FEATURES.length : 0);
+  const featureStackOf = (n2: number) => ({
+    version: FEATURE_STACK_VERSION,
+    opticalBands, sarBands: sar ? SAR_FEATURES.length : 0, totalBands,
+    sar: !!sar, sarOrbit, nS1Scenes: stack.nS1, nS2Scenes: n2,
+  });
 
   let classified: any;
   let oa: number | null = null;
@@ -1181,19 +1438,26 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   let nValPoints = 0;
   let nTrainPoints = 0;
   let accP: Promise<any> | null = null;
+  let histP: Promise<Record<string, number>> | null = null;   // Mahalanobis class histogram
   let training: any = null;   // the run's training table (supervised branch)
+  let train: any = null;
+  let val: any = null;
   let noteCode: string | undefined;
   const notes: string[] = [];
   const addNote = (code: string) => { if (!notes.includes(code)) notes.push(code); };
   if (scheme === "crops" && resolvedFamily === "full") addNote("season_detected");
   if (sampleDistanceKm(input.aoiGeo) > 40) addNote("samples_far");
+  // Sentinel-1 joins every supervised run of a period that has S1 scenes; only
+  // the instant scan (its reference statistics are optical) and K-Means stay
+  // on the optical stack
+  if (!sar) addNote("sar_skipped");
   let vis: { min: string; max: string; palette: string };
   const paletteCsv = scheme === "crops" ? PALETTE_CSV : GENERAL_PALETTE_CSV;
   const visMax = String(classesOf(scheme).length);
 
   if (input.algorithm === "signature") {
     // ---- instant scan: measured reference statistics, no training ----
-    const sig = signatureFeatures(s2);
+    const sig = signatureFeatures(getS2(region, start, end, cloud));
     classified = signatureClassifyImage(sig, scheme, family).clip(aoi);
     vis = { min: "1", max: visMax, palette: paletteCsv };
     noteCode = "instant_estimate";
@@ -1201,9 +1465,11 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     nTrain = 0;
     nVal = 0;
   } else if (input.algorithm === "kmeans") {
-    const ktrain = feats.sample({ region: aoi, scale: 100, numPixels: 2500, seed: 1 });
+    // K-Means measures Euclidean distances on raw band values: it keeps the
+    // optical stack (dB backscatter would dominate every cluster centre)
+    const ktrain = optical.sample({ region: aoi, scale: 100, numPixels: 2500, seed: 1 });
     const clusterer = ee.Clusterer.wekaKMeans(kClusters).train(ktrain);
-    classified = feats.cluster(clusterer).clip(aoi);
+    classified = optical.cluster(clusterer).clip(aoi);
     vis = {
       min: "0", max: String(kClusters - 1),
       palette: KMEANS_PALETTE.slice(0, kClusters).join(","),
@@ -1217,42 +1483,39 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     nValPoints = trainingPoints.filter((pt) => (pt.split ?? 0) >= 0.7).length;
     nTrainPoints = trainingPoints.length - nValPoints;
     training = sampleTraining(feats, trainingFC(trainingPoints));
-    const train = training.filter(ee.Filter.lt("split", 0.7));
-    const val = training.filter(ee.Filter.gte("split", 0.7));
-
-    // fail fast with a friendly error when no sample point yielded a pixel
-    [nTrain, nVal] = await Promise.all([
-      p<number>((cb) => train.size().getInfo(cb)),
-      p<number>((cb) => val.size().getInfo(cb)),
-    ]);
-    if (nTrain === 0) throw new GEEError("samples_outside_aoi");
+    train = training.filter(ee.Filter.lt("split", 0.7));
+    val = training.filter(ee.Filter.gte("split", 0.7));
+    // the pixel counts are NOT awaited here: counting the table is a full
+    // sampling pass (the longest step of a cold run). They ride along with
+    // the accuracy request below, and "no sample pixel at all" is confirmed
+    // by a count only after the training request has failed.
 
     // Mahalanobis inverts a covariance matrix over the feature bands: the
     // full monthly stack (21–45 highly collinear bands) is rank-deficient for
     // 360 reference points, so it runs on the 9 decorrelated seasonal summary
     // bands — pre-checked so it fails friendly, never opaquely server-side.
+    const distBased = DISTANCE_BASED.includes(input.algorithm);
     const inputProperties = input.algorithm === "mindist_m"
       ? ee.List(MINDIST_BANDS)
       : feats.bandNames();
+    // distance-based classifiers (SVM-RBF, k-NN, minimum distance) run on the
+    // z-scored stack — the statistics come from the TRAINING rows only
+    const std = distBased ? standardize(feats, train, inputProperties) : null;
     const classifier = input.algorithm === "mlp"
       ? null // hybrid: trained in Node below, applied via mlpClassifyImage
-      : makeClassifier(input.algorithm, rfTrees, knnK).train({
-          features: train, classProperty: "class", inputProperties,
+      : makeClassifier(input.algorithm, { rfTrees, knnK, nBands: totalBands }).train({
+          features: std ? std.mapTable(train) : train,
+          classProperty: "class", inputProperties,
         });
     classified = input.algorithm === "mlp"
       ? null // assigned after training
-      : feats.classify(classifier!).clip(aoi);
+      : (std ? std.featsStd : feats).classify(classifier!).clip(aoi);
     vis = { min: "1", max: visMax, palette: paletteCsv };
 
     if (input.algorithm === "mindist_m") {
-      const hist = await p<Record<string, number>>((cb) =>
+      // fetched with the other round trips below (it needs the sampled table)
+      histP = p<Record<string, number>>((cb) =>
         train.aggregate_histogram("class").getInfo(cb));
-      const counts = Object.values(hist || {});
-      const minCount = counts.length ? Math.min(...counts) : 0;
-      if (minCount <= MINDIST_BANDS.length) {
-        throw new GEEError("mahalanobis_needs_samples",
-          `Mahalanobis needs more than ${MINDIST_BANDS.length} training pixels per class (smallest class: ${minCount})`);
-      }
     }
 
     if (input.algorithm === "mlp") {
@@ -1262,6 +1525,9 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
         fcToMlpRows(train, bandNames),
         fcToMlpRows(val, bandNames),
       ]);
+      nTrain = trainRows.length;
+      nVal = valRows.length;
+      if (nTrain === 0) throw new GEEError("samples_outside_aoi");
       const model = mlpTrain(trainRows, bandNames, {
         hidden: input.mlpHidden, epochs: input.mlpEpochs,
       });
@@ -1277,13 +1543,17 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
         noteCode = "no_accuracy";
         addNote("no_accuracy");
       }
-    } else if (nVal >= 10) {
-      const cm = val.classify(classifier!).errorMatrix("class", "classification");
+    } else {
+      // the withheld rows go through the same standardization as the training rows
+      const cm = (std ? std.mapTable(val) : val)
+        .classify(classifier!).errorMatrix("class", "classification");
       // the accuracy evaluation only depends on the trained classifier, so it
-      // runs concurrently with the tiles / areas / download round trips below
+      // runs concurrently with the tiles / areas / download round trips below;
+      // the training/validation pixel counts come back from the same request
       accP = p<any>((cb) => ee.Dictionary({
         oa: cm.accuracy(), kappa: cm.kappa(), matrix: cm.array().toList(),
         classes: val.aggregate_array("class").distinct().sort(),
+        nTrain: train.size(), nVal: val.size(),
       }).getInfo(cb)).catch((err: unknown) => {
         const msg = String((err as Error)?.message ?? err);
         if (/covariance|singular/i.test(msg)) {
@@ -1291,9 +1561,6 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
         }
         throw err;
       });
-    } else {
-      noteCode = "no_accuracy";
-      addNote("no_accuracy");
     }
   }
 
@@ -1313,6 +1580,7 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
       durationMs: Date.now() - t0, downloadUrl: null, thumbUrl,
       notes: notes.length ? notes : undefined,
       areaKm2: 0, sampleSource, nReferencePoints: trainingPoints.length,
+      featureStack: featureStackOf(0),
     } as RunResult;
   }
 
@@ -1366,7 +1634,8 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
       trace("download", downloadP(tifScale)),
       trace("nImages", nImagesP),
       trace("acc", accP ?? Promise.resolve(null)),
-    ]) as [any, any, string | null, number, any];
+      trace("hist", histP ?? Promise.resolve(null)),
+    ]) as [any, any, string | null, number, any, Record<string, number> | null];
     mapId = settled[0];
     areaRes = settled[1];
     if (settled[2]) {
@@ -1378,8 +1647,22 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
       if (dl2) { downloadUrl = dl2; downloadScaleM = dl2Scale; }
     }
     nImages = settled[3];
+    if (settled[5]) {
+      const counts = Object.values(settled[5] || {});
+      const minCount = counts.length ? Math.min(...counts) : 0;
+      if (minCount <= MINDIST_BANDS.length) {
+        throw new GEEError("mahalanobis_needs_samples",
+          `Mahalanobis needs more than ${MINDIST_BANDS.length} training pixels per class (smallest class: ${minCount})`);
+      }
+    }
     const acc = settled[4];
     if (acc) {
+      nTrain = Number(acc.nTrain) || 0;
+      nVal = Number(acc.nVal) || 0;
+      if (nTrain === 0) throw new GEEError("samples_outside_aoi");
+    }
+    // fewer than 10 withheld pixels → no accuracy figure is reported
+    if (acc && nVal >= 10) {
       oa = Number(acc.oa); kappa = Number(acc.kappa);
       const valClasses: number[] = (acc.classes || []).map((x: unknown) => Number(x));
       const raw: number[][] = (acc.matrix || []).map((row: unknown[]) =>
@@ -1398,10 +1681,22 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
         const total = compact.reduce((s, row) => s + row.reduce((s2, v) => s2 + v, 0), 0);
         confusion = { classIds: axes, rows: compact, total, nValPoints: nValPoints || nVal };
       }
+    } else if (acc) {
+      noteCode = "no_accuracy";
+      addNote("no_accuracy");
     }
   } catch (e) {
     // map known server errors to friendly codes (e.g. singular covariance)
     const msg = String((e as Error)?.message ?? e);
+    // every labelled pixel masked (all points cloudy / outside the stack) →
+    // training fails server-side; the counts confirm that friendly case
+    if (training && !nTrain) {
+      const counts = await Promise.all([
+        p<number>((cb) => train.size().getInfo(cb)),
+        p<number>((cb) => val.size().getInfo(cb)),
+      ]).catch(() => null);
+      if (counts && counts[0] === 0) throw new GEEError("samples_outside_aoi");
+    }
     if (/covariance|singular/i.test(msg)) {
       throw new GEEError("mahalanobis_needs_samples", msg);
     }
@@ -1489,6 +1784,7 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
     sampleSource,
     sampleClassCounts: pointCounts,
     nReferencePoints: trainingPoints.length,
+    featureStack: featureStackOf(nImages),
   };
 }
 
@@ -1528,7 +1824,7 @@ async function compareAllOnce(input: PeriodInput & {
   const { start, end, family: resolvedFamily } = resolvePeriod(input);
   const family = runFamily(scheme, resolvedFamily, start, end);
   const cloud = input.cloudMax ?? 60;
-  const rfTrees = input.rfTrees ?? 100;
+  const rfTrees = input.rfTrees ?? TUNED.rf.trees;
   const knnK = input.knnK ?? 5;
 
   // training set: manual points when sufficient, otherwise the built-in
@@ -1544,13 +1840,15 @@ async function compareAllOnce(input: PeriodInput & {
     console.error("DV_TRACE " + JSON.stringify(Object.fromEntries(timings)));
   }
   if (!nImages) throw new GEEError("no_images");
-  const s2 = getS2(region, start, end, cloud);
-  const feats = buildFeatures(s2, start, end);
+  const stack = await buildRunStack(region, start, end, cloud);
+  const { feats } = stack;
+  const totalBands = opticalBandCount(start, end) + (stack.sar ? SAR_FEATURES.length : 0);
   const training = sampleTraining(feats, trainingFC(trainingPoints));
-  const nSampled = await p<number>((cb) => training.size().getInfo(cb));
-  if (!nSampled) throw new GEEError("samples_outside_aoi");
   const train = training.filter(ee.Filter.lt("split", 0.7));
   const val = training.filter(ee.Filter.gte("split", 0.7));
+  // the sampled row counts ride along with the first algorithm's accuracy
+  // request — a separate size() round trip is one more cold sampling pass
+  let nSampled = 0;
 
   // MLP trains on this Node process — fetch its feature tables once up front
   // and reuse them for training + validation (same split as the GEE path).
@@ -1571,22 +1869,29 @@ async function compareAllOnce(input: PeriodInput & {
       let kappa: number | null;
       if (key === "mlp") {
         if (!mlpData || mlpData.valRows.length === 0) {
+          if (!mlpData || !mlpData.trainRows.length) throw new GEEError("samples_outside_aoi");
           throw new GEEError("mlp_needs_classes", "no validation rows for MLP");
         }
+        nSampled = mlpData.trainRows.length + mlpData.valRows.length;
         const model = mlpTrain(mlpData.trainRows, mlpData.bandNames, {
           hidden: input.mlpHidden, epochs: input.mlpEpochs,
         });
         const cm = mlpConfusion(model, mlpData.valRows);
         oa = cm.oa; kappa = cm.kappa;
       } else {
-        const classifier = makeClassifier(key, rfTrees, knnK).train({
-          features: train, classProperty: "class",
-          inputProperties: key === "mindist_m" ? ee.List(MINDIST_BANDS) : feats.bandNames(),
+        const distBased = DISTANCE_BASED.includes(key);
+        const inputProperties = key === "mindist_m" ? ee.List(MINDIST_BANDS) : feats.bandNames();
+        const std = distBased ? standardize(feats, train, inputProperties) : null;
+        const classifier = makeClassifier(key, { rfTrees, knnK, nBands: totalBands }).train({
+          features: std ? std.mapTable(train) : train,
+          classProperty: "class", inputProperties,
         });
-        const cm = val.classify(classifier).errorMatrix("class", "classification");
+        const cm = (std ? std.mapTable(val) : val)
+          .classify(classifier).errorMatrix("class", "classification");
         const acc = await p<any>((cb) => ee.Dictionary({
-          oa: cm.accuracy(), kappa: cm.kappa(),
+          oa: cm.accuracy(), kappa: cm.kappa(), nTrain: train.size(), nVal: val.size(),
         }).getInfo(cb));
+        if (acc.nTrain + acc.nVal > nSampled) nSampled = acc.nTrain + acc.nVal;
         oa = Number(acc.oa); kappa = Number(acc.kappa);
       }
       summary.push({ algorithm: key, oa, kappa, nVal: 0 });
@@ -1598,6 +1903,7 @@ async function compareAllOnce(input: PeriodInput & {
       summary.push({ algorithm: key, oa: null, kappa: null, nVal: 0 });
     }
   }
+  if (!nSampled) throw new GEEError("samples_outside_aoi");
   if (!summary.some((s) => s.oa != null)) {
     throw new GEEError("all_algorithms_failed", "every supervised algorithm failed to train");
   }
@@ -1609,6 +1915,18 @@ async function compareAllOnce(input: PeriodInput & {
   for (const row of summary) row.nVal = best.nVal;
   return { summary, best };
 }
+
+/* ------------------------------------------------------------------ */
+/* Diagnostics namespace — the engine's own builders, exported for the  */
+/* offline leakage-free experiments (scripts/dv/*.js). The API routes    */
+/* never call it; the experiments therefore measure exactly what a      */
+/* live run computes (same stack, same sampling, same split).           */
+/* ------------------------------------------------------------------ */
+export const DIAG = {
+  rawCollection, getS2, buildOpticalFeatures, rawS1, refineS1, buildSarFeatures, buildRunStack,
+  s1SceneCounts, unionRegion, trainingFC, sampleTraining, selectTrainingPoints, perClassMetrics,
+  resolvePeriod, standardize, periodThirds, makeClassifier,
+};
 
 export async function compareAll(input: Parameters<typeof compareAllOnce>[0]): Promise<{
   summary: CompareSummaryRow[];

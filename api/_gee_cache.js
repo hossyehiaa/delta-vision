@@ -19,7 +19,7 @@ const memory = new Map();           // key → { at, result }
 /** canonical key of a normalized run body (see run.js normalize) */
 function runKey(body) {
   const parts = {
-    v: 4,   // scheme version: palette / active-set revision — old cached rows miss once
+    v: 5,   // feature-stack revision: v3 S1-SAR + S2-optical fusion — old cached rows miss once
     scheme: body.scheme,
     algorithm: body.algorithm,
     season: body.season,

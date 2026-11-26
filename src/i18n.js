@@ -65,7 +65,7 @@
     { key: "summer_peak", family: "summer" },
     { key: "full", family: "full" }
   ];
-  var YEARS = [2026, 2025, 2024, 2023];
+  var YEARS = [2026, 2025, 2024, 2023, 2022, 2021];
   var DEFAULT_YEAR = 2026;
   var DEFAULT_SEASON = "winter";
   var DEFAULT_ALGORITHM = "rf";
@@ -86,7 +86,7 @@
   ];
   /** Parameter ranges of this interface; `def` is the engine's default. */
   var PARAMS = {
-    rfTrees: { min: 10, max: 500, step: 10, def: 100 },
+    rfTrees: { min: 10, max: 500, step: 10, def: 300 },
     knnK: { min: 1, max: 15, step: 1, def: 5 },
     kClusters: { min: 2, max: 30, step: 1, def: 8 },
     mlpHidden: { min: 4, max: 128, step: 2, def: 24 },
@@ -409,8 +409,7 @@
         pngFailed: "The image export failed ({err}).",
         tifOk: "GeoTIFF downloaded: {size} at {scale} m/px", tifFailed: "The GeoTIFF download failed ({err}).",
         printTitle: "Delta Vision — classification report",
-        printIntro: "Full-frame classified map, class areas and validation matrix.",
-        geojsonOk: "GeoJSON downloaded: {n} features, {area} feddan", geojsonEmpty: "Draw or load a study area first.",
+        printIntro: "Full-frame classified map, class areas and validation matrix. Sentinel-1 SAR + Sentinel-2 optical fusion feature stack.",        geojsonOk: "GeoJSON downloaded: {n} features, {area} feddan", geojsonEmpty: "Draw or load a study area first.",
         stageFetch: "Fetching Sentinel-2 imagery…", stageTrain: "Training the model…", stageRender: "Rendering the map…",
         fromCache: "shown from cache", rerun: "Re-run fresh",
         confusionCaption: "Pixel-based validation: {pixels} pixels sampled from {points} withheld validation points ({split}).",
@@ -420,7 +419,11 @@
         insight: "Measured accuracy is low at this level: crop types overlap strongly in the Sentinel-2 signal. Switch to the land-cover level for a reliable map, or add crop-specific samples.",
         trainingSet: "{source} — {train} training · {val} validation ({split}) · {k} classes",
         trainingSplitBuiltin: "20 coordinate overlaps removed", trainingSplitManual: "70/30 by point",
-        confusionSplitBuiltin: "the professor's dedicated train/validation split"
+        confusionSplitBuiltin: "the professor's dedicated train/validation split",
+        fusionChip: "Sentinel-1 SAR + Sentinel-2 Optical Fusion",
+        fusionLine: "Feature stack: Sentinel-1 SAR + Sentinel-2 optical fusion — {bands} bands ({optical} optical + {sar} SAR) · {s1} S1 / {s2} S2 scenes",
+        fusionBands: "{n} bands",
+        fusionOpticalOnly: "Feature stack: Sentinel-2 optical ({bands} bands)"
       },
       history: {
         title: "Run history", close: "Close", text: "Every finished run of this account, newest first.",
@@ -796,7 +799,7 @@
         pngFailed: "فشل تصدير الصورة ({err}).",
         tifOk: "تم تنزيل GeoTIFF: {size} بدقة {scale} م/بكسل", tifFailed: "فشل تنزيل GeoTIFF ({err}).",
         printTitle: "دلتا فيجن — تقرير التصنيف",
-        printIntro: "الخريطة المصنّفة كاملة، مساحات الفئات، ومصفوفة التحقق.",
+        printIntro: "الخريطة المصنّفة كاملة، مساحات الفئات، ومصفوفة التحقق. مكدس خصائص دمج رادار Sentinel-1 + بصريات Sentinel-2.",
         geojsonOk: "تم تنزيل GeoJSON: {n} عنصرًا بمساحة {area} فدان", geojsonEmpty: "ارسم أو حمّل منطقة دراسة أولًا.",
         stageFetch: "جاري جلب صور Sentinel-2…", stageTrain: "جاري تدريب النموذج…", stageRender: "جاري إنتاج الخريطة…",
         fromCache: "معروض من الذاكرة المؤقتة", rerun: "إعادة تشغيل جديدة",
@@ -807,7 +810,11 @@
         insight: "الدقة المقاسة منخفضة عند هذا المستوى: تتداخل المحاصيل بقوة في إشارة Sentinel-2. انتقل لمستوى غطاء الأرض لخريطة موثوقة، أو أضف عينات خاصة بالمحاصيل.",
         trainingSet: "{source} — {train} تدريب · {val} تحقق ({split}) · {k} فئات",
         trainingSplitBuiltin: "أُزيلت 20 نقطة متطابقة", trainingSplitManual: "70/30 بالنقطة",
-        confusionSplitBuiltin: "تقسيم البروفيسور المخصص تدريب/تحقق"
+        confusionSplitBuiltin: "تقسيم البروفيسور المخصص تدريب/تحقق",
+        fusionChip: "دمج Sentinel-1 رادار + Sentinel-2 بصري",
+        fusionLine: "مكدس الخصائص: دمج رادار Sentinel-1 + بصريات Sentinel-2 — {bands} نطاقًا ({optical} بصري + {sar} راداري) · {s1} مشهد S1 / {s2} مشهد S2",
+        fusionBands: "{n} نطاق",
+        fusionOpticalOnly: "مكدس الخصائص: Sentinel-2 بصري فقط ({bands} نطاقًا)"
       },
       history: {
         title: "سجل التشغيل", close: "إغلاق", text: "كل عملية تشغيل مكتملة لهذا الحساب، الأحدث أولًا.",
