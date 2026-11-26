@@ -95,7 +95,18 @@ module.exports = async function (req, res) {
       kClusters: num(body.kClusters != null ? body.kClusters : p.kClusters, 8),
       knnK: num(body.knnK != null ? body.knnK : p.knnK, 5),
       samplePoints: Array.isArray(body.samplePoints) ? body.samplePoints : [],
-      aoiGeo: body.aoiGeo && (body.aoiGeo.type === "Polygon" || body.aoiGeo.type === "MultiPolygon") ? body.aoiGeo : undefined,
+      aoiGeo: (() => {
+        const g = body.aoiGeo;
+        if (!g || typeof g !== "object") return undefined;
+        if (g.type === "Polygon" || g.type === "MultiPolygon") return g;
+        if (g.type === "FeatureCollection" && Array.isArray(g.features)) {
+          const geoms = g.features.map((f) => f && f.geometry).filter((x) => x && (x.type === "Polygon" || x.type === "MultiPolygon"));
+          if (!geoms.length) return undefined;
+          if (geoms.length === 1) return geoms[0];
+          return { type: "MultiPolygon", coordinates: geoms.flatMap((x) => x.type === "Polygon" ? [x.coordinates] : x.coordinates) };
+        }
+        return undefined;
+      })(),
       aoiName: body.aoiName ? String(body.aoiName) : undefined,
       thumbDim: 1400,
     };

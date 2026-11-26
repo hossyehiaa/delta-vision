@@ -30,10 +30,33 @@ const SEASONS = [
   "winter", "early_winter", "late_winter", "summer", "summer_peak", "full", "custom",
 ];
 
-/** Accept the frontend's { params: { … } } bundle and/or Basira-style flat keys. */
+/** Accept the frontend's { params: { … } } bundle and/or Basira-style flat keys.
+ *  aoiGeo arrives as a GeoJSON FeatureCollection (the frontend's state.aoi.fc):
+ *  it is converted to the engine's Polygon/MultiPolygon geometry here — a
+ *  dropped FC would silently classify Borj El Arab (the original live bug). */
+const POLYGON_TYPES = ["Polygon", "MultiPolygon"];
+function aoiGeometry(aoiGeo) {
+  if (!aoiGeo || typeof aoiGeo !== "object") return undefined;
+  if (POLYGON_TYPES.includes(aoiGeo.type)) return aoiGeo;
+  if (aoiGeo.type === "FeatureCollection" && Array.isArray(aoiGeo.features)) {
+    const geoms = aoiGeo.features
+      .map((f) => f && f.geometry)
+      .filter((g) => g && POLYGON_TYPES.includes(g.type));
+    if (!geoms.length) {
+      const err = new Error("aoi FeatureCollection has no Polygon/MultiPolygon features");
+      err.code = "bad_aoi_geometry";
+      throw err;
+    }
+    if (geoms.length === 1) return geoms[0];
+    return { type: "MultiPolygon", coordinates: geoms.flatMap((g) =>
+      g.type === "Polygon" ? [g.coordinates] : g.coordinates) };
+  }
+  return undefined;   // anything else: no AOI → the engine's built-in default
+}
 function normalize(body) {
   const p = (body && typeof body.params === "object" && body.params) || {};
-  const aoiGeo = body.aoiGeo;
+  let aoiGeo;
+  try { aoiGeo = aoiGeometry(body.aoiGeo); } catch (e) { throw e; }
   return {
     kind: body.kind === "compare" ? "compare" : "run",
     scheme: body.scheme === "crops" ? "crops" : "general",
@@ -64,7 +87,10 @@ module.exports = async function (req, res) {
   try {
     body = normalize(readBody(req));
   } catch (e) {
-    return json(res, { error: "BAD_JSON" }, 400);
+    // bad_aoi_geometry (a FeatureCollection with no polygon features) must
+    // surface as itself — never a silent Borj El Arab fallback
+    const code = e && e.code === "bad_aoi_geometry" ? e.code : "BAD_JSON";
+    return json(res, { error: code, message: String((e && e.message) || e).slice(0, 200) }, 400);
   }
   try {
     if (body.kind === "compare") {
