@@ -114,6 +114,38 @@ function unwrap(r) { try { return JSON.parse(r.body); } catch (e) { return {}; }
   ok(E.sampleDistanceKm(undefined) < 40, "the built-in AOI is near the sample set (" + E.sampleDistanceKm(undefined).toFixed(1) + " km)");
   ok(E.sampleDistanceKm({ type: "Polygon", coordinates: [[[32.0, 30.85], [32.0, 30.9], [32.1, 30.9], [32.1, 30.85], [32.0, 30.85]]] }) > 100, "an AOI 2° away counts as far");
 
+  console.log("== custom AOI never silently falls back to Borj El Arab");
+  // a malformed submitted AOI must fail LOUDLY (GEEError bad_aoi_geometry),
+  // never classify Borj El Arab in its place
+  const malformedCases = [
+    { type: "Polygon", coordinates: [[[0, 0], [1, 1]]] },                        // < 4 points
+    { type: "Polygon", coordinates: [[[0, 0], [0, 1], [1, "x"], [1, 0], [0, 0]]] }, // non-finite coord
+    { type: "MultiPolygon", coordinates: [] },                                     // no rings
+    { type: "Polygon", coordinates: [[[0, 0], [0, 1], [1, 1], [1, 0], [0, 0]], [[0.2, 0.2]]] }, // bad hole
+  ];
+  for (const bad of malformedCases) {
+    let code = "NO_THROW";
+    try { E.makeAoi(bad); } catch (e) { code = e instanceof E.GEEError ? e.code : "OTHER"; }
+    ok(code === "bad_aoi_geometry", "malformed AOI → GEEError bad_aoi_geometry (" + bad.type + ")", code);
+  }
+  // a VALID custom AOI must NOT be replaced: without EE auth the ee.Geometry
+  // constructor itself throws an auth error — proving the geometry reached
+  // Earth Engine instead of being swapped for the built-in ring
+  let hitEE = false;
+  try { E.makeAoi({ type: "Polygon", coordinates: [[[25.0, 31.2], [25.0, 31.4], [25.4, 31.4], [25.4, 31.2], [25.0, 31.2]]] }); }
+  catch (e) { hitEE = /authentication credential/i.test(String(e && e.message || e)); }
+  ok(hitEE, "valid custom AOI reaches ee.Geometry (no silent Borj swap)");
+
+  console.log("== area/tif scale ladders scale with the AOI (governorate-safe)");
+  // the ladders are keyed by aoiGeoAreaM2. Matrouh governorate is ~166,160
+  // km²; a 2.6°×1.3° box at 31° latitude is ~35,770 km² — enough to prove
+  // the engine measures big custom AOIs correctly (way past the 5,000 km²
+  // memory tier, far above Borj El Arab's 595.7 km²)
+  const matrouh = { type: "Polygon", coordinates: [[[24.7, 30.4], [24.7, 31.7], [27.3, 31.7], [27.3, 30.4], [24.7, 30.4]]] };
+  const mk2 = E.aoiGeoAreaM2(matrouh) / 1e6;
+  ok(mk2 > 35000 && mk2 < 36200, "Matrouh-scale box measures ≈ 35,770 km²", mk2);
+  ok(E.aoiGeoAreaM2(undefined) / 1e6 < 600, "Borj stays on the fine ladder (< 600 km²)");
+
   console.log("== MLP hybrid (deterministic, pure JS)");
   // three well-separated classes over 6 features → the network must nail them
   const rows = [];

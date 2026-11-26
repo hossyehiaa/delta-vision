@@ -429,13 +429,23 @@ export function runFamily(scheme: SchemeKey, family: SeasonFamily, start: string
 /* ------------------------------------------------------------------ */
 
 /** Build the EE geometry for a run: the custom GeoJSON polygon when given,
- *  otherwise the built-in Borj El Arab boundary. */
+ *  otherwise the built-in Borj El Arab boundary. A malformed submitted AOI
+ *  is a hard error — NEVER a silent fallback to Borj El Arab (a custom
+ *  upload must classify ITS area or fail loudly). */
 export function makeAoi(aoiGeo?: AoiGeoInput): any {
-  if (aoiGeo?.type === "MultiPolygon") {
-    return ee.Geometry.MultiPolygon(aoiGeo.coordinates);
-  }
-  if (aoiGeo?.type === "Polygon") {
-    return ee.Geometry.Polygon(aoiGeo.coordinates);
+  if (aoiGeo) {
+    const rings = aoiGeo.type === "MultiPolygon" ? (aoiGeo.coordinates as number[][][][]).flat()
+    : aoiGeo.type === "Polygon" ? (aoiGeo.coordinates as number[][][]) : null;
+    // EVERY ring (outer + holes) must be ≥ 4 finite coordinate pairs — a
+    // malformed hole is just as fatal as a malformed outer ring
+    const bad = !rings || !rings.length || rings.some((r) => !Array.isArray(r) || r.length < 4
+      || r.some((pt: unknown) => !Array.isArray(pt) || pt.length < 2
+        || !Number.isFinite(+((pt as number[])[0])) || !Number.isFinite(+((pt as number[])[1]))));
+    if (bad) {
+      throw new GEEError("bad_aoi_geometry", "the submitted AOI polygon is malformed (every ring needs ≥ 4 finite coordinate pairs)");
+    }
+    if (aoiGeo.type === "MultiPolygon") return ee.Geometry.MultiPolygon(aoiGeo.coordinates);
+    if (aoiGeo.type === "Polygon") return ee.Geometry.Polygon(aoiGeo.coordinates);
   }
   return ee.Geometry.Polygon([BORJ_COORDS]);
 }
@@ -707,15 +717,16 @@ function unionRegion(aoi: any, pts: { lon: number; lat: number }[]): any {
 /** how far the AOI centroid lies from the sample-set centroid (km) — the
  *  "samples_far" note fires beyond 40 km */
 export function sampleDistanceKm(aoiGeo: AoiGeoInput | undefined): number {
-  const ring: number[][] =
+  const ring: number[][] | undefined =
     aoiGeo?.type === "Polygon"
       ? (aoiGeo.coordinates as number[][][])[0]
       : aoiGeo?.type === "MultiPolygon"
-        ? (aoiGeo.coordinates as number[][][][])[0][0]
+        ? (aoiGeo.coordinates as number[][][][])[0]?.[0]
         : (BORJ_COORDS as unknown as number[][]);
+  const pts = Array.isArray(ring) && ring.length ? ring : (BORJ_COORDS as unknown as number[][]);
   let cx = 0, cy = 0;
-  for (const pt of ring) { cx += pt[0]; cy += pt[1]; }
-  cx /= ring.length; cy /= ring.length;
+  for (const pt of pts) { cx += pt[0]; cy += pt[1]; }
+  cx /= pts.length; cy /= pts.length;
   let px = 0, py = 0;
   for (const [, lon, lat] of RAW_POINTS) { px += Number(lon); py += Number(lat); }
   px /= RAW_POINTS.length; py /= RAW_POINTS.length;
@@ -1308,14 +1319,15 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   // All independent server round trips at once: tiles, class areas, the
   // GeoTIFF link and the accuracy evaluation (plus the image count started
   // earlier) — sequential awaits here were pure latency.
-  // Area aggregation ladder: 20 m keeps the class shares close to the 10 m
-  // classification (AOIs ≤ 200 km²). Above that the measured cost of a 20–30 m
-  // reduceRegion over e.g. Borj El Arab (597 km²) is ~24 s on a cold EE cache
-  // (vs ~8–10 s at 100 m), so large AOIs use 60 m — finer than the previous
-  // 100 m, fast enough, and the shares are rescaled to the exact geodesic
-  // total anyway. tileScale 4 + bestEffort prevent memory spikes.
+  // Area aggregation ladder — the reduceRegion scale follows the AOI size so
+  // a governorate-sized upload never hits the GEE memory limit:
+  //   ≤ 200 km² → 20 m (10 m-class shares), ≤ 5,000 km² → 60 m,
+  //   ≤ 50,000 km² → 150 m, above → 300 m. bestEffort + tileScale keep the
+  // request inside one worker's budget, and the shares are rescaled to the
+  // exact geodesic total anyway, so a coarser ladder never biases the
+  // percentages — it only bounds the pixel count.
   const aoiM2 = aoiGeoAreaM2(input.aoiGeo);
-  const areaScaleM = aoiM2 > 200e6 ? 60 : 20;
+  const areaScaleM = aoiM2 <= 200e6 ? 20 : aoiM2 <= 5000e6 ? 60 : aoiM2 <= 50000e6 ? 150 : 300;
   const timings: [string, number][] = [];
   const trace = (label: string, pr: Promise<any>): Promise<any> => {
     if (!process.env.DV_TRACE) return pr;
@@ -1332,7 +1344,11 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
   // synchronous download memory budget on large AOIs ("User memory limit
   // exceeded"), so the scale steps up automatically — 10 m ≤ 100 km²,
   // 20 m ≤ 300 km², 30 m above (Borj El Arab).
-  const tifScale = aoiM2 <= 100e6 ? 10 : aoiM2 <= 300e6 ? 20 : 30;
+  // GeoTIFF ladder mirrors the memory budget to the AOI size: 10 m ≤ 100 km²,
+  // 20 m ≤ 300 km², 30 m ≤ 5,000 km² (Borj El Arab), 100 m above — a
+  // governorate download stays inside the synchronous budget, and the
+  // per-pixel class codes are unchanged by the resample.
+  const tifScale = aoiM2 <= 100e6 ? 10 : aoiM2 <= 300e6 ? 20 : aoiM2 <= 5000e6 ? 30 : 100;
   const tifName = `deltavision_${scheme}_${input.algorithm}_${start}_${end}.tif`.replace(/-/g, "");
   const downloadP = (scale: number) =>
     p<string>((cb) => classified.toByte().getDownloadURL({
@@ -1357,8 +1373,9 @@ async function runClassificationOnce(input: RunInput): Promise<RunResult> {
       downloadUrl = settled[2]; downloadScaleM = tifScale;
     } else {
       // first scale failed (memory) → step straight to the coarsest safe one
-      const dl2 = await downloadP(30);
-      if (dl2) { downloadUrl = dl2; downloadScaleM = 30; }
+      const dl2Scale = aoiM2 > 5000e6 ? 250 : 30;
+      const dl2 = await downloadP(dl2Scale);
+      if (dl2) { downloadUrl = dl2; downloadScaleM = dl2Scale; }
     }
     nImages = settled[3];
     const acc = settled[4];
