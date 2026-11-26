@@ -5184,18 +5184,6 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
     box.appendChild(el("span", "num", parts.join(" · ")));
   }
 
-  /** Bake zoom from the AOI's bounding box — the tile count must land in
-   *  [9, 25] whatever the AOI size: a whole governorate bakes at z8–z9 (a
-   *  dozen tiles), a district at z10–z11, a farm at z12–z13. Fixed z12
-   *  needed hundreds of tiles for a governorate (rate-limit storm) and
-   *  starved a tiny box of detail. */
-  function dynamicBakeZoom(bbox) {
-    var z = 12, grid = tileGridFor(bbox, z), n = grid.nx * grid.ny;
-    while (n > 25 && z > 3) { z--; grid = tileGridFor(bbox, z); n = grid.nx * grid.ny; }   // governorates step down
-    while (n < 9 && z < 18) { z++; grid = tileGridFor(bbox, z); n = grid.nx * grid.ny; }    // small boxes step up (sub-tile AOIs cross a tile boundary only by z16+)
-    return z;
-  }
-
   // ---------------------------------------------------------------- AOI: shapefile upload
   function setAoi(aoi) {
     state.aoi = aoi;
@@ -6429,6 +6417,17 @@ window.DVIMG = {hero:"data:image/webp;base64,UklGRhhfAgBXRUJQVlA4IAxfAgBQ5wedASp
    *  resolves only with a fully verified raster, so the export and the
    *  print report can never composite a partial grid. On failure the z11
    *  preview layer simply stays on screen. */
+  /** Bake zoom from the AOI's bounding box — the tile count must land in
+   *  [9, 25] whatever the AOI size: a whole governorate bakes at z8–z9 (a
+   *  dozen tiles), a district at z10–z11, a farm at z12–z13. Fixed z12
+   *  needed hundreds of tiles for a governorate (rate-limit storm) and
+   *  starved a tiny box of detail. */
+  function dynamicBakeZoom(bbox) {
+    var z = 12, grid = tileGridFor(bbox, z), n = grid.nx * grid.ny;
+    while (n > 25 && z > 3) { z--; grid = tileGridFor(bbox, z); n = grid.nx * grid.ny; }   // governorates step down
+    while (n < 9 && z < 18) { z++; grid = tileGridFor(bbox, z); n = grid.nx * grid.ny; }    // small boxes step up (sub-tile AOIs cross a tile boundary only by z16+)
+    return z;
+  }
   function bakeOverlay(r) {
     if (bakePromise) return bakePromise;
     bakeSettled = false;   // export buttons show "Preparing full map…" until the bake settles

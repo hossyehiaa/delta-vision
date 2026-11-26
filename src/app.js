@@ -744,16 +744,29 @@
   function setAoi(aoi) {
     state.aoi = aoi;
     state.results = null;
-    if (overlayLayer) { map.removeLayer(overlayLayer); overlayLayer = null; }
+    resetClassificationOverlay();   // stale baked Borj raster never outlives its AOI
     drawAoi();
     renderAoiSummary();
     renderSamples(); // refresh: sample markers sit on top of the AOI
     renderResults();
   }
+  /** Drop EVERY layer and raster of the previous classification the moment
+   *  the AOI changes: the live z11 preview, the baked L.imageOverlay, its
+   *  blob URL (revoked) and canvas, and the in-flight bake promise (marked
+   *  settled so export/print never await a raster of the OLD AOI). What
+   *  remains on the map is the new AOI outline only — results come back
+   *  with the run. */
+  function resetClassificationOverlay() {
+    if (overlayLayer) { map.removeLayer(overlayLayer); overlayLayer = null; }
+    if (overlayPreviewLayer) { map.removeLayer(overlayPreviewLayer); overlayPreviewLayer = null; }
+    if (bakedOverlay) { map.removeLayer(bakedOverlay); bakedOverlay = null; }
+    bakedCanvas = null; bakePromise = null; bakeSettled = true;
+    if (bakedUrl) { try { URL.revokeObjectURL(bakedUrl); } catch (e) { /* noop */ } bakedUrl = null; }
+  }
   function clearAoi() {
     state.aoi = null; state.results = null;
     aoiLayer.clearLayers(); drawLayer.clearLayers();
-    if (overlayLayer) { map.removeLayer(overlayLayer); overlayLayer = null; }
+    resetClassificationOverlay();
     mapInitFit = false;
     renderAoiSummary(); renderResults(); renderLegend();
   }
@@ -1685,6 +1698,9 @@
       (input.samplePoints || []).map(function (p) { return p.classId + "," + (+p.lon).toFixed(5) + "," + (+p.lat).toFixed(5); }).sort().join(";"),
       JSON.stringify(input.aoiGeo ? { t: input.aoiGeo.type, n: (input.aoiGeo.coordinates || []).length } : "borj") + "|" + aoiHash(input.aoiGeo),
     ];
+    // NOTE: aoiName is deliberately NOT in the key — the geometry hash IS
+    // the AOI's identity. A custom AOI uploaded with the same display name
+    // ("GeoJSON area") must never hit a cached run of another geometry.
     return parts.join("|");
   };
   function aoiHash(aoiGeo) {
@@ -1693,6 +1709,124 @@
     var h = 0;
     for (var i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0;
     return (h >>> 0).toString(36);
+  }
+  /** Douglas-Peucker ring simplification (metres-driven tolerance): keep the
+   *  shape while cutting a huge uploaded boundary (a whole governorate can
+   *  carry thousands of vertices) under the payload/geometry limits. */
+  function dpSimplifyRing(ring, tolM) {
+    if (!ring || ring.length < 4) return ring;
+    var R = 6371000;
+    var toXY = function (p) { return [p[0] * Math.PI / 180 * R, p[1] * Math.PI / 180 * R]; };   // equirectangular on the ring's own scale
+    var pts = ring.map(toXY);
+    // perpendicular distance (m) from pts[i] to the segment a-b
+    var segDist = function (a, b, p) {
+      var dx = b[0] - a[0], dy = b[1] - a[1];
+      var l2 = dx * dx + dy * dy;
+      if (l2 === 0) return Math.hypot(p[0] - a[0], p[1] - a[1]);
+      var t = Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / l2));
+      return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+    };
+    var keep = new Array(pts.length).fill(false);
+    keep[0] = keep[pts.length - 1] = true;
+    var stack = [[0, pts.length - 1]];
+    while (stack.length) {
+      var seg = stack.pop();
+      var a = seg[0], b = seg[1], iMax = -1, dMax = 0;
+      for (var i = a + 1; i < b; i++) {
+        var d = segDist(pts[a], pts[b], pts[i]);
+        if (d > dMax) { dMax = d; iMax = i; }
+      }
+      if (dMax > tolM && iMax > 0) {
+        keep[iMax] = true;
+        stack.push([a, iMax], [iMax, b]);
+      }
+    }
+    return ring.filter(function (_, i) { return keep[i]; });
+  }
+  var AOI_MAX_VERTICES = 500;
+  /** simplify the AOI's geometry when it exceeds the vertex budget. The
+   *  tolerance starts at ~0.1 % of the bbox diagonal and is HALVED until the
+   *  result fits the budget AND the authalic area drift stays within 1 % —
+   *  shape preservation is verified, not assumed (a pathological wiggly
+   *  boundary needs a finer tolerance than a smooth governorate ring).
+   *  Holes get the coarser tolerance; the outer ring drives the shape. */
+  function simplifyAoiGeometry(fc) {
+    if (!fc || !fc.features) return fc;
+    var b = G.collectionBbox(fc);
+    if (!b) return fc;
+    var diagM = Math.hypot((b[2] - b[0]) * 111320, (b[3] - b[1]) * 111320 * Math.cos(((b[1] + b[3]) / 2) * Math.PI / 180));
+    var countVertices = function (geometry) {
+      if (!geometry) return 0;
+      var rings = geometry.type === "Polygon" ? geometry.coordinates
+        : geometry.type === "MultiPolygon" ? [].concat.apply([], geometry.coordinates) : [];
+      return rings.reduce(function (s, r) { return s + r.length; }, 0);
+    };
+    var areaM2 = function (fcol) {
+      return fcol.features.reduce(function (s, f) {
+        return s + (f.geometry ? G.geometryAreaM2(f.geometry) : 0);
+      }, 0);
+    };
+    var total = fc.features.reduce(function (s, f) { return s + countVertices(f.geometry); }, 0);
+    if (total <= AOI_MAX_VERTICES) return fc;   // small enough — ship the exact geometry
+    var before = areaM2(fc);
+    var tol0 = Math.max(50, diagM * 0.001);   // start: ~0.1 % of the bbox diagonal, ≥ 50 m
+    var simplifyGeometry = function (geometry, tolM) {
+      if (!geometry) return geometry;
+      var mapRings = function (rings, tolOuter, tolHole) {
+        return rings.map(function (r, ri) { return dpSimplifyRing(r, ri === 0 ? tolOuter : tolHole); });
+      };
+      if (geometry.type === "Polygon") return { type: "Polygon", coordinates: mapRings(geometry.coordinates, tolM, tolM * 4) };
+      if (geometry.type === "MultiPolygon") return {
+        type: "MultiPolygon",
+        coordinates: geometry.coordinates.map(function (poly) { return mapRings(poly, tolM, tolM * 4); })
+      };
+      return geometry;
+    };
+    var best = null;
+    for (var tol = tol0; tol >= 5; tol = tol / 2) {
+      var feats = fc.features.map(function (f) { return { type: "Feature", properties: f.properties || {}, geometry: simplifyGeometry(f.geometry, tol) }; });
+      var out = { type: "FeatureCollection", features: feats };
+      var after = feats.reduce(function (s, f) { return s + countVertices(f.geometry); }, 0);
+      var drift = before > 0 ? Math.abs(areaM2(out) - before) / before : 0;
+      // keep the best-so-far: shape-preserved results win; among those the
+      // coarsest (fewest vertices) that still fits the budget. A drifted
+      // result only serves as fallback while nothing better exists, and a
+      // finer pass with a smaller drift ALWAYS replaces it.
+      if (!best || drift < best.drift || (drift <= 0.01 && after <= AOI_MAX_VERTICES)) {
+        best = { fc: out, drift: drift, after: after };
+      }
+      if (drift <= 0.01 && after <= AOI_MAX_VERTICES) break;   // shape + budget both satisfied
+    }
+    var simplified = best ? best.fc : null;
+    if (!simplified) {
+      // no tolerance preserved the shape well enough: use the finest one
+      feats = fc.features.map(function (f) { return { type: "Feature", properties: f.properties || {}, geometry: simplifyGeometry(f.geometry, 5) }; });
+      simplified = { type: "FeatureCollection", features: feats };
+    }
+    var afterFinal = simplified.features.reduce(function (s, f) { return s + countVertices(f.geometry); }, 0);
+    if (afterFinal > AOI_MAX_VERTICES) {
+      // still over budget: stride-thin every ring (keeps first/last so rings stay closed)
+      simplified.features.forEach(function (f) {
+        var g = f.geometry;
+        if (!g) return;
+        var thin = function (r) {
+          if (r.length < 8) return r;
+          var stride = Math.ceil(r.length / Math.max(8, Math.floor(AOI_MAX_VERTICES * r.length / afterFinal)));
+          var out = r.filter(function (_, i) { return i % stride === 0 || i === r.length - 1; });
+          return out.length >= 4 ? out : r;
+        };
+        if (g.type === "Polygon") g.coordinates = g.coordinates.map(function (r, ri) { return ri === 0 ? thin(r) : r; });
+        else if (g.type === "MultiPolygon") g.coordinates = g.coordinates.map(function (poly) { return poly.map(function (r, ri) { return ri === 0 ? thin(r) : r; }); });
+      });
+    }
+    return simplified;
+  }
+  /** the GeoJSON the run requests carry: the ACTIVE AOI geometry,
+   *  simplified when huge so a governorate upload never exceeds the
+   *  Vercel/GEE payload limits. The map keeps drawing the exact outline;
+   *  only the request geometry is simplified. */
+  function runAoiGeo() {
+    return state.aoi ? simplifyAoiGeometry(state.aoi.fc) : undefined;
   }
 
   /* live-run stage progress: data-driven — the bar advances over the elapsed
@@ -1739,7 +1873,7 @@
       cloudMax: state.params.cloudMax,
       params: pickParams(algo),
       samplePoints: state.samples.map(function (s) { return { classId: s.classId, lon: s.lon, lat: s.lat }; }),
-      aoiGeo: state.aoi.fc,
+      aoiGeo: runAoiGeo(),
       aoiName: state.aoi.name
     };
     var cacheKey = runCacheKey(input);
@@ -1839,14 +1973,24 @@
    *  resolves only with a fully verified raster, so the export and the
    *  print report can never composite a partial grid. On failure the z11
    *  preview layer simply stays on screen. */
+  /** Bake zoom from the AOI's bounding box — the tile count must land in
+   *  [9, 25] whatever the AOI size: a whole governorate bakes at z8–z9 (a
+   *  dozen tiles), a district at z10–z11, a farm at z12–z13. Fixed z12
+   *  needed hundreds of tiles for a governorate (rate-limit storm) and
+   *  starved a tiny box of detail. */
+  function dynamicBakeZoom(bbox) {
+    var z = 12, grid = tileGridFor(bbox, z), n = grid.nx * grid.ny;
+    while (n > 25 && z > 3) { z--; grid = tileGridFor(bbox, z); n = grid.nx * grid.ny; }   // governorates step down
+    while (n < 9 && z < 18) { z++; grid = tileGridFor(bbox, z); n = grid.nx * grid.ny; }    // small boxes step up (sub-tile AOIs cross a tile boundary only by z16+)
+    return z;
+  }
   function bakeOverlay(r) {
     if (bakePromise) return bakePromise;
     bakeSettled = false;   // export buttons show "Preparing full map…" until the bake settles
     bakePromise = new Promise(function (resolve, reject) {
       var b = G.collectionBbox(state.aoi.fc);
-      var z = 12, grid = tileGridFor(b, z);
-      while (grid.nx * grid.ny > 64 && z > 2) { z--; grid = tileGridFor(b, z); }   // huge AOIs bake at a lower zoom
-      while (grid.nx * grid.ny < 4 && z < 12) { z++; grid = tileGridFor(b, z); }   // tiny AOIs keep some detail
+      var z = dynamicBakeZoom(b);
+      var grid = tileGridFor(b, z);
       var total = grid.nx * grid.ny;
       var tiles = new Array(total);
       var launched = new Array(total);   // true while a fetch for that tile is in flight
@@ -2057,7 +2201,7 @@
       cloudMax: state.params.cloudMax,
       params: pickParams(algo),
       samplePoints: state.samples.map(function (s) { return { classId: s.classId, lon: s.lon, lat: s.lat }; }),
-      aoiGeo: state.aoi.fc,
+      aoiGeo: runAoiGeo(),
       aoiName: state.aoi.name
     };
   }
@@ -2658,7 +2802,7 @@
       cloudMax: state.params.cloudMax,
       params: pickParams(algo),
       samplePoints: state.samples.map(function (sx) { return { classId: sx.classId, lon: sx.lon, lat: sx.lat }; }),
-      aoiGeo: state.aoi ? state.aoi.fc : undefined,
+      aoiGeo: runAoiGeo(),
       aoiName: state.aoi ? state.aoi.name : undefined
     };
   }
@@ -2796,7 +2940,8 @@
     // 9–30 tiles — deep enough to be sharp, small enough that Earth Engine
     // renders them all quickly (and most are already warm from the map, which
     // caps its own native zoom at 13). Borj El Arab lands on z12/z13.
-    var z = 13, grid = tileGridFor(b, z);
+    var z = dynamicBakeZoom(b);   // same size-driven zoom as the bake (9–25 tiles)
+    var grid = tileGridFor(b, z);
     while (grid.nx * grid.ny > 30 && z > 8) { z--; grid = tileGridFor(b, z); }
     while (grid.nx * grid.ny < 9 && z < 17) { z++; grid = tileGridFor(b, z); }
     var total = grid.nx * grid.ny;
