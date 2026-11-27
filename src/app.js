@@ -428,6 +428,7 @@
               oa: rr.oa, kappa: rr.kappa, classes: rr.classes || [], confusion: rr.confusion || null,
               nValPoints: rr.nValPoints, nImages: rr.nImages, nTrain: rr.nTrain, nVal: rr.nVal,
               sampleSource: rr.sampleSource, durationMs: rr.durationMs, noteCodes: rr.noteCodes || [],
+              featureStack: rr.featureStack || null,   // hydrated cache rows keep the fusion indicator
               downloadUrl: rr.downloadUrl, downloadScaleM: rr.downloadScaleM, areaKm2: rr.areaKm2,
             };
             // fill in the class display fields the snapshot keeps
@@ -1666,6 +1667,7 @@
       nReferencePoints: jr.nReferencePoints != null ? jr.nReferencePoints : null,
       durationMs: jr.durationMs || null,
       noteCodes: noteCodes,
+      featureStack: jr.featureStack || null,   // v3 S1+S2 fusion indicator (48+24 bands)
       downloadUrl: jr.downloadUrl || null,
       areaKm2: jr.areaKm2 != null ? jr.areaKm2 : G.m2ToKm2(state.aoi ? state.aoi.areaM2 : 0)
     };
