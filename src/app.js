@@ -3319,6 +3319,7 @@
       scheme: r.scheme || null, family: r.family || null,
       activeClassIds: r.activeClassIds || null, excludedClassIds: r.excludedClassIds || [],
       noteCodes: (r.noteCodes || []).slice(),
+      featureStack: r.featureStack || null,   // v3 S1+S2 fusion: survives the history round-trip
       areaKm2: r.areaKm2 != null ? r.areaKm2 : null,
       tileUrl: r.tileUrl || null,
       downloadUrl: r.downloadUrl || null, downloadScaleM: r.downloadScaleM != null ? r.downloadScaleM : null,
@@ -3471,6 +3472,7 @@
           nImages: rr.nImages || null, nTrain: rr.nTrain || null, nVal: rr.nVal || null,
           sampleSource: rr.sampleSource || null, durationMs: rr.durationMs || null,
           noteCodes: (rr.noteCodes || []).slice(),
+          featureStack: rr.featureStack || null,   // restored runs keep the S1+S2 fusion indicator
           downloadUrl: rr.downloadUrl || null, downloadScaleM: rr.downloadScaleM != null ? rr.downloadScaleM : null,
           areaKm2: rr.areaKm2 != null ? rr.areaKm2 : (state.aoi ? G.m2ToKm2(state.aoi.areaM2) : null),
           fromHistory: true
